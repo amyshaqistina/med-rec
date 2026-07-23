@@ -1,0 +1,11 @@
+<?php
+
+use Illuminate\Support\Facades\Route;
+
+Route::middleware(['auth', 'verified'])->group(function () {
+    Route::livewire('patients', 'pages::patients.index')->name('patients.index');
+    Route::livewire('patients/create', 'pages::patients.create')->name('patients.create');
+    Route::livewire('patients/{patient}', 'pages::patients.show')->name('patients.show');
+    Route::livewire('patients/{patient}/edit', 'pages::patients.edit')->name('patients.edit');
+    Route::livewire('patients/{patient}/medication-history', 'pages::patients.medication-history')->name('patients.medication-history');
+});

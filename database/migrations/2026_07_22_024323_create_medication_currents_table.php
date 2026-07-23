@@ -1,0 +1,37 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('medication_currents', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('reconciliation_id')->constrained('reconciliations')->cascadeOnDelete();
+            $table->string('medication_name');
+            $table->string('dose')->nullable();
+            $table->enum('route', ['PO', 'IV', 'IM', 'SC', 'Topical', 'Inhaled', 'Other'])->nullable();
+            $table->string('frequency')->nullable();
+            $table->string('indication')->nullable();
+            $table->string('ordered_by')->nullable();
+            $table->date('order_date')->nullable();
+            $table->timestamps();
+
+            $table->index('reconciliation_id');
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('medication_currents');
+    }
+};
