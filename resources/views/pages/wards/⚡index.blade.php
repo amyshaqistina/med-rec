@@ -1,5 +1,7 @@
 <?php
 
+use App\Enums\PatientStatus;
+use App\Enums\ReconciliationStatus;
 use App\Models\Ward;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -7,7 +9,15 @@ use Livewire\Component;
 new #[Title('Ward Dashboard')] class extends Component {
     public function with(): array
     {
-        $wards = Ward::withCount('patients')->orderBy('name')->get();
+        $wards = Ward::withCount('patients')
+            ->withCount(['patients as unreconciled_patients_count' => function ($query) {
+                $query->where('status', PatientStatus::Active)
+                    ->whereDoesntHave('reconciliations', function ($query) {
+                        $query->whereIn('status', [ReconciliationStatus::Completed, ReconciliationStatus::Closed]);
+                    });
+            }])
+            ->orderBy('name')
+            ->get();
 
         $totalPatients = $wards->sum('patients_count');
         $totalBeds = $wards->sum('bed_capacity');
@@ -71,18 +81,38 @@ new #[Title('Ward Dashboard')] class extends Component {
 
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         @foreach ($wards as $ward)
+            @php $needsReconciliation = $ward->unreconciled_patients_count > 0; @endphp
+
             <a
                 href="{{ route('wards.show', $ward) }}"
                 wire:navigate
                 wire:key="ward-{{ $ward->id }}"
-                class="flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-accent hover:shadow-md dark:border-zinc-700 dark:bg-zinc-900"
+                @class([
+                    'relative flex items-center justify-between rounded-xl border bg-white p-5 shadow-sm transition hover:shadow-md dark:bg-zinc-900',
+                    'border-red-300 hover:border-red-400 dark:border-red-500/40 dark:hover:border-red-500/70' => $needsReconciliation,
+                    'border-zinc-200 hover:border-accent dark:border-zinc-700' => ! $needsReconciliation,
+                ])
             >
+                @if ($needsReconciliation)
+                    <span class="absolute -top-1.5 -right-1.5 flex size-4">
+                        <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75"></span>
+                        <span class="relative inline-flex size-4 rounded-full bg-red-500"></span>
+                    </span>
+                @endif
+
                 <div class="flex items-center gap-4">
                     <div class="flex size-12 items-center justify-center rounded-full {{ $ward->iconClasses() }}">
                         <flux:icon.user class="size-6" />
                     </div>
                     <div>
-                        <flux:heading size="lg">{{ $ward->name }}</flux:heading>
+                        <div class="flex items-center gap-2">
+                            <flux:heading size="lg">{{ $ward->name }}</flux:heading>
+                            @if ($needsReconciliation)
+                                <flux:badge size="sm" color="red">
+                                    {{ $ward->unreconciled_patients_count }} pending
+                                </flux:badge>
+                            @endif
+                        </div>
                         <flux:text class="text-sm text-zinc-500">{{ $ward->department }}</flux:text>
                     </div>
                 </div>
