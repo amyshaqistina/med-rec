@@ -28,6 +28,20 @@ test('dashboard shows ward stats and lists every ward', function () {
     expect($response->viewData('availableBeds'))->toBe(15);
 });
 
+test('discharged patients no longer count toward ward occupancy', function () {
+    $this->actingAs(User::factory()->create());
+
+    $ward = Ward::factory()->create(['name' => 'Ward 1', 'bed_capacity' => 10]);
+
+    Patient::factory()->count(2)->create(['ward_id' => $ward->id]);
+    Patient::factory()->discharged()->create(['ward_id' => $ward->id]);
+
+    $response = Livewire::test('pages::wards.index');
+
+    expect($response->viewData('totalPatients'))->toBe(2);
+    expect($response->viewData('availableBeds'))->toBe(8);
+});
+
 test('clicking a ward navigates to its patient list', function () {
     $this->actingAs(User::factory()->create());
 

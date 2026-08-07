@@ -37,6 +37,8 @@ new #[Title('Edit Patient')] class extends Component {
 
     public string $ward_id = '';
 
+    public string $bed_no = '';
+
     public string $primary_diagnosis = '';
 
     public string $allergies = '';
@@ -71,6 +73,7 @@ new #[Title('Edit Patient')] class extends Component {
         $this->address_postcode = (string) $patient->address_postcode;
         $this->address_state = (string) $patient->address_state;
         $this->ward_id = $patient->ward_id !== null ? (string) $patient->ward_id : '';
+        $this->bed_no = (string) $patient->bed_no;
         $this->primary_diagnosis = (string) $patient->primary_diagnosis;
         $this->allergies = (string) $patient->allergies;
         $this->known_adrs = (string) $patient->known_adrs;
@@ -98,6 +101,7 @@ new #[Title('Edit Patient')] class extends Component {
             'address_postcode' => ['nullable', 'string', 'max:10'],
             'address_state' => ['nullable', 'string', 'max:50'],
             'ward_id' => ['nullable', 'integer', 'exists:wards,id'],
+            'bed_no' => ['nullable', 'string', 'max:20'],
             'primary_diagnosis' => ['nullable', 'string', 'max:255'],
             'allergies' => ['nullable', 'string'],
             'known_adrs' => ['nullable', 'string'],
@@ -174,6 +178,7 @@ new #[Title('Edit Patient')] class extends Component {
                         <option value="{{ $option->id }}">{{ $option->name }} — {{ $option->department }}</option>
                     @endforeach
                 </flux:select>
+                <flux:input wire:model="bed_no" label="Bed no." placeholder="e.g. E-01" />
                 <flux:input wire:model="primary_diagnosis" label="Primary diagnosis" />
             </div>
         </flux:fieldset>

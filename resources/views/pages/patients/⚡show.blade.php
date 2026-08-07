@@ -1,7 +1,10 @@
 <?php
 
 use App\Enums\PatientStatus;
+use App\Enums\ReconciliationStatus;
+use App\Enums\ReconciliationType;
 use App\Models\Patient;
+use App\Models\Reconciliation;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
@@ -30,6 +33,21 @@ new #[Title('Patient Details')] class extends Component {
         $this->showDischargeModal = false;
 
         Flux::toast('Patient discharged.', variant: 'success');
+    }
+
+    public function startReconciliation(): void
+    {
+        $this->authorize('create', Reconciliation::class);
+
+        $reconciliation = Reconciliation::create([
+            'patient_id' => $this->patient->id,
+            'type' => ReconciliationType::Admission,
+            'status' => ReconciliationStatus::Draft,
+            'started_at' => now(),
+            'technician_id' => auth()->id(),
+        ]);
+
+        $this->redirect(route('reconciliations.show', $reconciliation), navigate: true);
     }
 
     public function with(): array
@@ -168,13 +186,11 @@ new #[Title('Patient Details')] class extends Component {
     <flux:card class="space-y-4">
         <div class="flex items-center justify-between">
             <flux:heading size="lg">Reconciliations</flux:heading>
-            @if (Route::has('reconciliations.create'))
-                @can('update', $patient)
-                    <flux:button size="sm" :href="route('reconciliations.create', $patient)" wire:navigate>
-                        New reconciliation
-                    </flux:button>
-                @endcan
-            @endif
+            @can('create', \App\Models\Reconciliation::class)
+                <flux:button size="sm" wire:click="startReconciliation">
+                    New reconciliation
+                </flux:button>
+            @endcan
         </div>
 
         @if ($reconciliations->isEmpty())

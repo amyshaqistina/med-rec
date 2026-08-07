@@ -17,6 +17,27 @@ use Illuminate\Database\Eloquent\Factories\Factory;
 class PatientFactory extends Factory
 {
     /**
+     * @var array<int, string>
+     */
+    private const DIAGNOSES = [
+        'Hypertension',
+        'Type 2 Diabetes Mellitus',
+        'Chest Pain',
+        'Community-Acquired Pneumonia',
+        'Acute Kidney Injury',
+        'Chronic Obstructive Pulmonary Disease',
+        'Congestive Heart Failure',
+        'Urinary Tract Infection',
+        'Ischaemic Stroke',
+        'Gastroenteritis',
+        'Sepsis',
+        'Atrial Fibrillation',
+        'Osteoarthritis',
+        'Post-Operative Recovery',
+        'Dengue Fever',
+    ];
+
+    /**
      * Define the model's default state.
      *
      * @return array<string, mixed>
@@ -36,7 +57,7 @@ class PatientFactory extends Factory
             'address_state' => fake()->state(),
             'admission_date' => now(),
             'ward_id' => null,
-            'primary_diagnosis' => fake()->words(3, true),
+            'primary_diagnosis' => fake()->randomElement(self::DIAGNOSES),
             'allergies' => null,
             'renal_function' => RenalFunction::Normal,
             'egfr' => fake()->randomFloat(2, 60, 120),

@@ -9,7 +9,9 @@ use Livewire\Component;
 new #[Title('Ward Dashboard')] class extends Component {
     public function with(): array
     {
-        $wards = Ward::withCount('patients')
+        $wards = Ward::withCount(['patients' => function ($query) {
+                $query->where('status', PatientStatus::Active);
+            }])
             ->withCount(['patients as unreconciled_patients_count' => function ($query) {
                 $query->where('status', PatientStatus::Active)
                     ->whereDoesntHave('reconciliations', function ($query) {

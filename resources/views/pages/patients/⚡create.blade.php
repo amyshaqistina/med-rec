@@ -37,6 +37,8 @@ new #[Title('New Patient')] class extends Component {
 
     public string $ward_id = '';
 
+    public string $bed_no = '';
+
     public string $primary_diagnosis = '';
 
     public string $allergies = '';
@@ -76,6 +78,7 @@ new #[Title('New Patient')] class extends Component {
             'address_state' => ['nullable', 'string', 'max:50'],
             'admission_date' => ['required', 'date'],
             'ward_id' => ['nullable', 'integer', 'exists:wards,id'],
+            'bed_no' => ['nullable', 'string', 'max:20'],
             'primary_diagnosis' => ['nullable', 'string', 'max:255'],
             'allergies' => ['nullable', 'string'],
             'known_adrs' => ['nullable', 'string'],
@@ -153,6 +156,7 @@ new #[Title('New Patient')] class extends Component {
                         <option value="{{ $option->id }}">{{ $option->name }} — {{ $option->department }}</option>
                     @endforeach
                 </flux:select>
+                <flux:input wire:model="bed_no" label="Bed no." placeholder="e.g. E-01" />
                 <flux:input wire:model="primary_diagnosis" label="Primary diagnosis" class="sm:col-span-2" />
             </div>
         </flux:fieldset>

@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Models\Ward;
 use App\Services\DiscrepancyDetectionService;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Collection;
 
 class DatabaseSeeder extends Seeder
 {
@@ -70,7 +71,7 @@ class DatabaseSeeder extends Seeder
     /**
      * Create the 10 hospital wards shown on the Ward Dashboard.
      *
-     * @return \Illuminate\Support\Collection<int, Ward>
+     * @return Collection<int, Ward>
      */
     private function seedWards()
     {
@@ -89,7 +90,7 @@ class DatabaseSeeder extends Seeder
     /**
      * Seed 10 complete patient records into each ward.
      *
-     * @param  \Illuminate\Support\Collection<int, Ward>  $wards
+     * @param  Collection<int, Ward>  $wards
      */
     private function seedWardPatients($wards, User $technician): void
     {
@@ -103,8 +104,12 @@ class DatabaseSeeder extends Seeder
         ];
 
         foreach ($wards as $ward) {
+            preg_match('/\d+/', $ward->name, $wardNumberMatch);
+            $wardNumber = $wardNumberMatch[0] ?? $ward->id;
+
             Patient::factory()
                 ->count(10)
+                ->sequence(fn ($sequence) => ['bed_no' => sprintf('%s-%02d', $wardNumber, $sequence->index + 1)])
                 ->create([
                     'ward_id' => $ward->id,
                     'created_by' => $technician->id,
@@ -147,6 +152,7 @@ class DatabaseSeeder extends Seeder
             'email' => 'ahmad.bin.ali@example.com',
             'admission_date' => now()->subDay(),
             'ward_id' => $ward?->id,
+            'bed_no' => '6-11',
             'primary_diagnosis' => 'Hypertension with acute kidney injury',
             'allergies' => 'Penicillin (anaphylaxis), NSAIDs (rash)',
             'renal_function' => RenalFunction::MildImpairment,

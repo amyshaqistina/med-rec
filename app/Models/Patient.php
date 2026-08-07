@@ -9,6 +9,7 @@ use App\Enums\PregnancyStatus;
 use App\Enums\RenalFunction;
 use App\Enums\RiskLevel;
 use App\Observers\PatientObserver;
+use Database\Factories\PatientFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Casts\Attribute;
@@ -36,6 +37,7 @@ use Illuminate\Support\Facades\DB;
  * @property Carbon $admission_date
  * @property Carbon|null $discharge_date
  * @property int|null $ward_id
+ * @property string|null $bed_no
  * @property string|null $primary_diagnosis
  * @property string|null $allergies
  * @property string|null $known_adrs
@@ -54,13 +56,13 @@ use Illuminate\Support\Facades\DB;
     'first_name', 'last_name', 'date_of_birth', 'gender',
     'contact_primary', 'contact_secondary', 'email',
     'address_street', 'address_city', 'address_postcode', 'address_state',
-    'admission_date', 'discharge_date', 'ward_id', 'primary_diagnosis',
+    'admission_date', 'discharge_date', 'ward_id', 'bed_no', 'primary_diagnosis',
     'allergies', 'known_adrs', 'renal_function', 'egfr', 'hepatic_function',
     'pregnancy_status', 'notes', 'status', 'created_by', 'updated_by',
 ])]
 class Patient extends Model
 {
-    /** @use HasFactory<\Database\Factories\PatientFactory> */
+    /** @use HasFactory<PatientFactory> */
     use HasFactory;
 
     protected function casts(): array
