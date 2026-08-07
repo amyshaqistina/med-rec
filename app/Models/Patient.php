@@ -149,6 +149,14 @@ class Patient extends Model
     }
 
     /**
+     * @return HasMany<LabResult, $this>
+     */
+    public function labResults(): HasMany
+    {
+        return $this->hasMany(LabResult::class);
+    }
+
+    /**
      * @return BelongsTo<User, $this>
      */
     public function createdBy(): BelongsTo

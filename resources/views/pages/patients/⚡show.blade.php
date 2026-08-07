@@ -37,14 +37,15 @@ new #[Title('Patient Details')] class extends Component {
         return [
             'medicationHistories' => $this->patient->medicationHistories()->latest()->get(),
             'reconciliations' => $this->patient->reconciliations()->latest()->get(),
+            'latestLabResult' => $this->patient->labResults()->latest('taken_at')->first(),
         ];
     }
 }; ?>
 
-<section class="w-full max-w-5xl space-y-6">
-    <div class="flex flex-wrap items-start justify-between gap-4">
+<section class="w-full space-y-6">
+    <div class="flex flex-wrap items-center justify-between gap-4">
         <div>
-            <div class="flex items-center gap-3">
+            <div class="flex flex-wrap items-center gap-3">
                 <flux:heading size="xl">{{ $patient->full_name }}</flux:heading>
                 <x-risk-badge :level="$patient->risk_level" />
                 <flux:badge size="sm" color="zinc">{{ $patient->status->value }}</flux:badge>
@@ -105,6 +106,30 @@ new #[Title('Patient Details')] class extends Component {
             @endif
         </flux:card>
     </div>
+
+    <flux:card class="space-y-4">
+        <div class="flex items-center justify-between">
+            <flux:heading size="lg">Latest lab results</flux:heading>
+            @if ($latestLabResult)
+                <flux:button size="sm" variant="ghost" :href="route('patients.lab-results', $patient)" wire:navigate>
+                    See all
+                </flux:button>
+            @endif
+        </div>
+
+        @if ($latestLabResult)
+            <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                <dt class="text-zinc-500">Test</dt>
+                <dd>{{ $latestLabResult->test_name }}</dd>
+                <dt class="text-zinc-500">Result</dt>
+                <dd>{{ $latestLabResult->result_value }} {{ $latestLabResult->unit }}</dd>
+                <dt class="text-zinc-500">Taken</dt>
+                <dd>{{ $latestLabResult->taken_at->format('d/m/Y H:i') }}</dd>
+            </dl>
+        @else
+            <flux:text class="text-sm text-zinc-500">No lab results recorded yet.</flux:text>
+        @endif
+    </flux:card>
 
     <flux:card class="space-y-4">
         <div class="flex items-center justify-between">
