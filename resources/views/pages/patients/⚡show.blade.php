@@ -52,10 +52,14 @@ new #[Title('Patient Details')] class extends Component {
 
     public function with(): array
     {
+        $latestLabDate = $this->patient->labResults()->max('taken_at');
+
         return [
-            'medicationHistories' => $this->patient->medicationHistories()->latest()->get(),
+            'medicationHistories' => $this->patient->medicationHistories()->latest()->limit(5)->get(),
             'reconciliations' => $this->patient->reconciliations()->latest()->get(),
-            'latestLabResult' => $this->patient->labResults()->latest('taken_at')->first(),
+            'latestLabResults' => $latestLabDate
+                ? $this->patient->labResults()->where('taken_at', $latestLabDate)->orderBy('test_name')->get()
+                : collect(),
         ];
     }
 }; ?>
@@ -127,36 +131,61 @@ new #[Title('Patient Details')] class extends Component {
 
     <flux:card class="space-y-4">
         <div class="flex items-center justify-between">
-            <flux:heading size="lg">Latest lab results</flux:heading>
-            @if ($latestLabResult)
+            <div>
+                <flux:heading size="lg">Latest lab results</flux:heading>
+                @if ($latestLabResults->isNotEmpty())
+                    <flux:subheading>Drawn {{ $latestLabResults->first()->taken_at->format('d/m/Y H:i') }}</flux:subheading>
+                @endif
+            </div>
+            @if ($latestLabResults->isNotEmpty())
                 <flux:button size="sm" variant="ghost" :href="route('patients.lab-results', $patient)" wire:navigate>
                     See all
                 </flux:button>
             @endif
         </div>
 
-        @if ($latestLabResult)
-            <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                <dt class="text-zinc-500">Test</dt>
-                <dd>{{ $latestLabResult->test_name }}</dd>
-                <dt class="text-zinc-500">Result</dt>
-                <dd>{{ $latestLabResult->result_value }} {{ $latestLabResult->unit }}</dd>
-                <dt class="text-zinc-500">Taken</dt>
-                <dd>{{ $latestLabResult->taken_at->format('d/m/Y H:i') }}</dd>
-            </dl>
-        @else
+        @if ($latestLabResults->isEmpty())
             <flux:text class="text-sm text-zinc-500">No lab results recorded yet.</flux:text>
+        @else
+            <flux:table>
+                <flux:table.columns>
+                    <flux:table.column>Test</flux:table.column>
+                    <flux:table.column>Result</flux:table.column>
+                    <flux:table.column>Reference range</flux:table.column>
+                    <flux:table.column>Date</flux:table.column>
+                </flux:table.columns>
+                <flux:table.rows>
+                    @foreach ($latestLabResults as $result)
+                        <flux:table.row :key="$result->id">
+                            <flux:table.cell variant="strong">{{ $result->test_name }}</flux:table.cell>
+                            <flux:table.cell>{{ $result->result_value }} {{ $result->unit }}</flux:table.cell>
+                            <flux:table.cell>{{ $result->reference_range ?? '—' }}</flux:table.cell>
+                            <flux:table.cell>{{ $result->taken_at->format('d/m/Y H:i') }}</flux:table.cell>
+                        </flux:table.row>
+                    @endforeach
+                </flux:table.rows>
+            </flux:table>
         @endif
     </flux:card>
 
     <flux:card class="space-y-4">
         <div class="flex items-center justify-between">
-            <flux:heading size="lg">Medication history (BPMH)</flux:heading>
-            @can('update', $patient)
-                <flux:button size="sm" :href="route('patients.medication-history', $patient)" wire:navigate>
-                    Manage medication history
-                </flux:button>
-            @endcan
+            <div>
+                <flux:heading size="lg">Medication history (BPMH)</flux:heading>
+                @if ($medicationHistories->isNotEmpty())
+                    <flux:subheading>Latest entries, most recent first</flux:subheading>
+                @endif
+            </div>
+            <div class="flex items-center gap-2">
+                @if ($medicationHistories->isNotEmpty())
+                    <flux:button size="sm" variant="ghost" :href="route('patients.medication-history.index', $patient)" wire:navigate>
+                        See all
+                    </flux:button>
+                @endif
+                @can('update', $patient)
+                    <flux:button size="sm" icon="plus" square :href="route('patients.medication-history.create', $patient)" wire:navigate tooltip="Add medication history" aria-label="Add medication history" />
+                @endcan
+            </div>
         </div>
 
         @if ($medicationHistories->isEmpty())
@@ -168,6 +197,8 @@ new #[Title('Patient Details')] class extends Component {
                     <flux:table.column>Dose</flux:table.column>
                     <flux:table.column>Frequency</flux:table.column>
                     <flux:table.column>Taking?</flux:table.column>
+                    <flux:table.column>Date</flux:table.column>
+                    <flux:table.column align="end">Actions</flux:table.column>
                 </flux:table.columns>
                 <flux:table.rows>
                     @foreach ($medicationHistories as $item)
@@ -176,6 +207,12 @@ new #[Title('Patient Details')] class extends Component {
                             <flux:table.cell>{{ $item->dose_amount }} {{ $item->dose_unit }}</flux:table.cell>
                             <flux:table.cell>{{ $item->frequency }}</flux:table.cell>
                             <flux:table.cell>{{ $item->is_patient_taking->value }}</flux:table.cell>
+                            <flux:table.cell>{{ $item->created_at->format('d/m/Y') }}</flux:table.cell>
+                            <flux:table.cell align="end">
+                                @can('update', $item)
+                                    <flux:button :href="route('patients.medication-history.edit', [$patient, $item])" wire:navigate variant="filled" size="sm" icon="pencil-square" />
+                                @endcan
+                            </flux:table.cell>
                         </flux:table.row>
                     @endforeach
                 </flux:table.rows>

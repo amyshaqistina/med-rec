@@ -182,7 +182,7 @@ new #[Title('Medication History')] class extends Component {
                 </div>
 
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                    <flux:input wire:model="rows.{{ $index }}.medication_name" label="Medication name" :disabled="! $this->isEditable" required />
+                    <flux:input wire:model="rows.{{ $index }}.medication_name" label="Medication name" list="medication-name-options" autocomplete="off" :disabled="! $this->isEditable" required />
                     <flux:input wire:model="rows.{{ $index }}.strength" label="Strength" :disabled="! $this->isEditable" placeholder="e.g. 500mg" />
                     <div class="grid grid-cols-2 gap-2">
                         <flux:input wire:model="rows.{{ $index }}.dose_amount" type="number" step="0.01" label="Dose" :disabled="! $this->isEditable" />
@@ -194,7 +194,7 @@ new #[Title('Medication History')] class extends Component {
                             <option value="{{ $option->value }}">{{ $option->value }}</option>
                         @endforeach
                     </flux:select>
-                    <flux:input wire:model="rows.{{ $index }}.frequency" label="Frequency" :disabled="! $this->isEditable" placeholder="e.g. Once Daily" />
+                    <flux:input wire:model="rows.{{ $index }}.frequency" label="Frequency" list="medication-frequency-options" autocomplete="off" :disabled="! $this->isEditable" placeholder="e.g. Once Daily" />
                     <flux:input wire:model="rows.{{ $index }}.timing" label="Timing" :disabled="! $this->isEditable" placeholder="e.g. Morning with breakfast" />
 
                     <flux:input wire:model="rows.{{ $index }}.indication" label="Indication" :disabled="! $this->isEditable" class="sm:col-span-2" />
@@ -235,4 +235,7 @@ new #[Title('Medication History')] class extends Component {
             </div>
         @endif
     </form>
+
+    <x-medication-name-datalist />
+    <x-medication-frequency-datalist />
 </section>

@@ -58,6 +58,8 @@ class DatabaseSeeder extends Seeder
             ]);
         }
 
+        $this->call(MedicationSeeder::class);
+
         if (app()->environment('local')) {
             $technician = $usersByRole[UserRole::Technician->value];
             $pharmacist = $usersByRole[UserRole::Pharmacist->value];
@@ -65,6 +67,7 @@ class DatabaseSeeder extends Seeder
             $wards = $this->seedWards();
             $this->seedWardPatients($wards, $technician);
             $this->seedDemoReconciliationScenario($technician, $pharmacist, $wards->firstWhere('name', 'Ward 6'));
+            $this->call(LabResultSeeder::class);
         }
     }
 
