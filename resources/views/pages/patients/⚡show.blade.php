@@ -56,7 +56,10 @@ new #[Title('Patient Details')] class extends Component {
 
         return [
             'medicationHistories' => $this->patient->medicationHistories()->latest()->limit(5)->get(),
-            'reconciliations' => $this->patient->reconciliations()->latest()->get(),
+            'latestReconciliation' => $this->patient->reconciliations()
+                ->with('medicationCurrents')
+                ->latest('started_at')
+                ->first(),
             'latestLabResults' => $latestLabDate
                 ? $this->patient->labResults()->where('taken_at', $latestLabDate)->orderBy('test_name')->get()
                 : collect(),
@@ -222,39 +225,41 @@ new #[Title('Patient Details')] class extends Component {
 
     <flux:card class="space-y-4">
         <div class="flex items-center justify-between">
-            <flux:heading size="lg">Reconciliations</flux:heading>
-            @can('create', \App\Models\Reconciliation::class)
-                <flux:button size="sm" wire:click="startReconciliation">
-                    New reconciliation
-                </flux:button>
-            @endcan
+            <div>
+                <flux:heading size="lg">Reconciliations</flux:heading>
+                @if ($latestReconciliation)
+                    <flux:subheading>Latest reconciliation only</flux:subheading>
+                @endif
+            </div>
+            <div class="flex items-center gap-2">
+                @if ($latestReconciliation)
+                    <flux:button size="sm" variant="ghost" :href="route('patients.reconciliations', $patient)" wire:navigate>See all</flux:button>
+                @endif
+                @can('create', \App\Models\Reconciliation::class)
+                    <flux:button size="sm" wire:click="startReconciliation">New reconciliation</flux:button>
+                @endcan
+            </div>
         </div>
 
-        @if ($reconciliations->isEmpty())
+        @if (! $latestReconciliation)
             <flux:text class="text-sm text-zinc-500">No reconciliations started yet.</flux:text>
         @else
             <flux:table>
                 <flux:table.columns>
-                    <flux:table.column>Type</flux:table.column>
-                    <flux:table.column>Status</flux:table.column>
-                    <flux:table.column>Started</flux:table.column>
+                    <flux:table.column>Medication name</flux:table.column>
+                    <flux:table.column>Dose</flux:table.column>
+                    <flux:table.column>Frequency</flux:table.column>
+                    <flux:table.column>Reconciliation type</flux:table.column>
+                    <flux:table.column>Date</flux:table.column>
                 </flux:table.columns>
                 <flux:table.rows>
-                    @foreach ($reconciliations as $reconciliation)
-                        <flux:table.row :key="$reconciliation->id">
-                            <flux:table.cell variant="strong">
-                                @if (Route::has('reconciliations.show'))
-                                    <a href="{{ route('reconciliations.show', $reconciliation) }}" wire:navigate class="hover:underline">
-                                        {{ $reconciliation->type->value }}
-                                    </a>
-                                @else
-                                    {{ $reconciliation->type->value }}
-                                @endif
-                            </flux:table.cell>
-                            <flux:table.cell>
-                                <flux:badge size="sm" :color="$reconciliation->status->color()">{{ str($reconciliation->status->value)->replace('_', ' ') }}</flux:badge>
-                            </flux:table.cell>
-                            <flux:table.cell>{{ $reconciliation->started_at?->format('d/m/Y H:i') ?? '—' }}</flux:table.cell>
+                    @foreach ($latestReconciliation->medicationCurrents as $medication)
+                        <flux:table.row :key="$medication->id">
+                            <flux:table.cell variant="strong">{{ $medication->medication_name }}</flux:table.cell>
+                            <flux:table.cell>{{ $medication->dose ?? '—' }}</flux:table.cell>
+                            <flux:table.cell>{{ $medication->frequency ?? '—' }}</flux:table.cell>
+                            <flux:table.cell><a href="{{ route('reconciliations.show', $latestReconciliation) }}" wire:navigate class="hover:underline">{{ $latestReconciliation->type->value }}</a></flux:table.cell>
+                            <flux:table.cell>{{ $latestReconciliation->started_at?->format('d/m/Y H:i') ?? '—' }}</flux:table.cell>
                         </flux:table.row>
                     @endforeach
                 </flux:table.rows>

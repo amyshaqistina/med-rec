@@ -78,6 +78,12 @@ class Reconciliation extends Model
         return $this->hasMany(Discrepancy::class);
     }
 
+    /** @return HasMany<MedicationSafetyReview, $this> */
+    public function medicationSafetyReviews(): HasMany
+    {
+        return $this->hasMany(MedicationSafetyReview::class);
+    }
+
     /**
      * @return BelongsTo<User, $this>
      */

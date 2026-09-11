@@ -2,16 +2,18 @@
 
 use App\Enums\DiscrepancySeverity;
 use App\Enums\DiscrepancyStatus;
+use App\Enums\AdherenceLevel;
 use App\Enums\MedicationRoute;
 use App\Enums\PharmacistAssessment;
 use App\Enums\ReconciliationStatus;
 use App\Enums\ReconciliationType;
+use App\Enums\SourceType;
 use App\Enums\TakingStatus;
 use App\Models\Discrepancy;
 use App\Models\LabResult;
 use App\Models\MedicationCurrent;
 use App\Models\Reconciliation;
-use App\Services\DiscrepancyDetectionService;
+use App\Services\DrugBankMedicationSafetyReviewService;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -55,10 +57,17 @@ new #[Title('Reconciliation Verification')] class extends Component {
             ->map(fn (MedicationCurrent $item) => [
                 'id' => $item->id,
                 'medication_name' => $item->medication_name,
-                'dose' => (string) $item->dose,
+                'strength' => (string) $item->strength,
+                'dose_amount' => $item->dose_amount !== null ? (string) $item->dose_amount : '',
+                'dose_unit' => (string) $item->dose_unit,
                 'route' => $item->route?->value ?? '',
                 'frequency' => (string) $item->frequency,
+                'timing' => (string) $item->timing,
                 'indication' => (string) $item->indication,
+                'is_patient_taking' => $item->is_patient_taking?->value ?? TakingStatus::Yes->value,
+                'adherence_level' => $item->adherence_level?->value ?? AdherenceLevel::Full->value,
+                'non_adherence_reason' => (string) $item->non_adherence_reason,
+                'source_type' => $item->source_type?->value ?? SourceType::PatientReport->value,
                 'ordered_by' => (string) $item->ordered_by,
             ])
             ->all();
@@ -145,10 +154,17 @@ new #[Title('Reconciliation Verification')] class extends Component {
         $this->currentRows[] = [
             'id' => null,
             'medication_name' => '',
-            'dose' => '',
+            'strength' => '',
+            'dose_amount' => '',
+            'dose_unit' => '',
             'route' => '',
             'frequency' => '',
+            'timing' => '',
             'indication' => '',
+            'is_patient_taking' => TakingStatus::Yes->value,
+            'adherence_level' => AdherenceLevel::Full->value,
+            'non_adherence_reason' => '',
+            'source_type' => SourceType::PatientReport->value,
             'ordered_by' => '',
         ];
     }
@@ -167,21 +183,31 @@ new #[Title('Reconciliation Verification')] class extends Component {
         $this->currentRows = array_values($this->currentRows);
     }
 
-    public function saveCurrentMedications(bool $silent = false): void
+    public function saveCurrentMedications(): void
     {
         $this->authorize('update', $this->reconciliation);
 
         $validated = $this->validate([
             'currentRows.*.medication_name' => ['required', 'string', 'max:255'],
-            'currentRows.*.dose' => ['nullable', 'string', 'max:100'],
+            'currentRows.*.strength' => ['nullable', 'string', 'max:100'],
+            'currentRows.*.dose_amount' => ['nullable', 'numeric'],
+            'currentRows.*.dose_unit' => ['nullable', 'string', 'max:50'],
             'currentRows.*.route' => ['nullable', Rule::enum(MedicationRoute::class)],
             'currentRows.*.frequency' => ['nullable', 'string', 'max:100'],
+            'currentRows.*.timing' => ['nullable', 'string', 'max:255'],
             'currentRows.*.indication' => ['nullable', 'string', 'max:255'],
+            'currentRows.*.is_patient_taking' => ['required', Rule::enum(TakingStatus::class)],
+            'currentRows.*.adherence_level' => ['nullable', Rule::enum(AdherenceLevel::class)],
+            'currentRows.*.non_adherence_reason' => ['nullable', 'string', 'max:255'],
+            'currentRows.*.source_type' => ['nullable', Rule::enum(SourceType::class)],
             'currentRows.*.ordered_by' => ['nullable', 'string', 'max:255'],
         ])['currentRows'];
 
         foreach ($validated as $index => $data) {
             $data = array_map(fn ($value) => $value === '' ? null : $value, $data);
+            $data['dose'] = $data['dose_amount'] !== null
+                ? trim($data['dose_amount'].' '.($data['dose_unit'] ?? ''))
+                : null;
             $id = $this->currentRows[$index]['id'] ?? null;
 
             if ($id) {
@@ -196,33 +222,7 @@ new #[Title('Reconciliation Verification')] class extends Component {
 
         $this->loadCurrentRows();
 
-        if (! $silent) {
-            Flux::toast('Current medication list saved.', variant: 'success');
-        }
-    }
-
-    public function runDiscrepancyCheck(DiscrepancyDetectionService $service, bool $silent = false): void
-    {
-        $this->authorize('update', $this->reconciliation);
-
-        $service->sync($this->reconciliation);
-
-        $this->loadAssessments();
-
-        if (! $silent) {
-            Flux::toast('Discrepancy check complete.', variant: 'success');
-        }
-    }
-
-    /**
-     * Combines the two most common next steps into a single click.
-     */
-    public function saveAndCheckDiscrepancies(DiscrepancyDetectionService $service): void
-    {
-        $this->saveCurrentMedications(silent: true);
-        $this->runDiscrepancyCheck($service, silent: true);
-
-        Flux::toast('Medications saved and discrepancy check complete.', variant: 'success');
+        Flux::toast('Current medication list saved.', variant: 'success');
     }
 
     public function saveAssessments(): void
@@ -254,6 +254,27 @@ new #[Title('Reconciliation Verification')] class extends Component {
         Flux::toast('Assessments saved.', variant: 'success');
     }
 
+    public function runMedicationSafetyReview(DrugBankMedicationSafetyReviewService $service): void
+    {
+        $this->authorize('pharmacistAssess', $this->reconciliation);
+
+        if (! config('services.drugbank.enabled')) {
+            Flux::toast('Medication safety reviews are currently paused.', variant: 'warning');
+
+            return;
+        }
+
+        // Reviews always use a persisted medication list, never partially typed inputs.
+        $this->saveCurrentMedications();
+
+        try {
+            $service->review($this->reconciliation);
+            Flux::toast('Medication safety review completed. Pharmacist review is still required.', variant: 'success');
+        } catch (\RuntimeException $exception) {
+            Flux::toast($exception->getMessage(), variant: 'danger');
+        }
+    }
+
     public function completeVerification(): void
     {
         $this->authorize('pharmacistAssess', $this->reconciliation);
@@ -265,6 +286,8 @@ new #[Title('Reconciliation Verification')] class extends Component {
         ]);
 
         Flux::toast('Reconciliation verification complete.', variant: 'success');
+
+        $this->redirect(route('patients.show', $this->reconciliation->patient_id), navigate: true);
     }
 
     public function with(): array
@@ -288,6 +311,7 @@ new #[Title('Reconciliation Verification')] class extends Component {
             'worstUnresolvedSeverity' => $unresolved->isEmpty()
                 ? null
                 : $unresolved->sortBy(fn ($a) => $severityRank[$a['severity']] ?? 99)->first()['severity'],
+            'latestSafetyReview' => $this->reconciliation->medicationSafetyReviews()->latest('reviewed_at')->first(),
         ];
     }
 }; ?>
@@ -449,9 +473,70 @@ new #[Title('Reconciliation Verification')] class extends Component {
         @endif
     </flux:card>
 
+    {{-- Explicitly requested, evidence-based safety review. It never changes medication orders. --}}
+    @if (config('services.drugbank.enabled'))
+    <flux:card class="space-y-4">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+                <flux:heading size="lg">Medication safety advice</flux:heading>
+                <flux:subheading>DrugBank interaction screening. This is decision support only and requires pharmacist review.</flux:subheading>
+            </div>
+            @can('pharmacistAssess', $reconciliation)
+                <flux:button size="sm" variant="primary" wire:click="runMedicationSafetyReview">
+                    Run medication safety review
+                </flux:button>
+            @endcan
+        </div>
+
+        @if (! $latestSafetyReview)
+            <flux:text class="text-sm text-zinc-500">No safety review has been run for this reconciliation.</flux:text>
+        @else
+            <div class="rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-700">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <flux:text class="font-medium">Reviewed {{ $latestSafetyReview->reviewed_at?->format('d/m/Y H:i') ?? '—' }}</flux:text>
+                    <flux:badge size="sm" color="zinc">{{ $latestSafetyReview->results['source'] ?? 'Review' }}</flux:badge>
+                </div>
+                <flux:text class="mt-2 text-xs text-zinc-500">{{ $latestSafetyReview->results['scope'] ?? '' }}</flux:text>
+            </div>
+
+            @if (filled($latestSafetyReview->results['alerts'] ?? []))
+                <div class="space-y-3">
+                    @foreach ($latestSafetyReview->results['alerts'] as $alert)
+                        @php
+                            $alertColor = match (strtolower($alert['severity'] ?? '')) {
+                                'major', 'critical' => 'red',
+                                'moderate' => 'amber',
+                                default => 'zinc',
+                            };
+                        @endphp
+                        <div class="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <flux:badge size="sm" :color="$alertColor">{{ str($alert['severity'] ?? 'Unknown')->headline() }}</flux:badge>
+                                @if (filled($alert['evidence_level'] ?? null))
+                                    <flux:badge size="sm" color="zinc">{{ str($alert['evidence_level'])->replace('_', ' ') }}</flux:badge>
+                                @endif
+                            </div>
+                            <flux:text class="mt-2">{{ $alert['finding'] }}</flux:text>
+                            @if (filled($alert['management'] ?? null))
+                                <flux:text class="mt-1 text-sm text-zinc-500">Suggested review: {{ $alert['management'] }}</flux:text>
+                            @endif
+                        </div>
+                    @endforeach
+                </div>
+            @else
+                <flux:callout variant="success" icon="check-circle" heading="No DrugBank interactions returned" text="This result does not replace pharmacist assessment or lab-specific dosing review." />
+            @endif
+
+            @if (filled($latestSafetyReview->results['unmatched_medications'] ?? []))
+                <flux:callout variant="warning" icon="exclamation-triangle" heading="Medication name needs review" :text="'DrugBank could not match: '.implode(', ', $latestSafetyReview->results['unmatched_medications']).'.'" />
+            @endif
+        @endif
+    </flux:card>
+    @endif
+
     {{-- Working area: the active/editable current list first, the historical BPMH reference second --}}
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <flux:card class="space-y-3 lg:order-1">
+    <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <flux:card class="space-y-4 xl:col-span-2">
             <div class="flex items-center justify-between">
                 <flux:heading size="lg">Current / intended medications</flux:heading>
                 @can('update', $reconciliation)
@@ -461,39 +546,66 @@ new #[Title('Reconciliation Verification')] class extends Component {
 
             <div class="space-y-3">
                 @foreach ($currentRows as $index => $row)
-                    <div class="grid grid-cols-1 gap-2 rounded-lg border border-zinc-200 p-3 dark:border-zinc-700 sm:grid-cols-2" wire:key="current-{{ $index }}">
-                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.medication_name" placeholder="Medication name" />
-                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.dose" placeholder="Dose, e.g. 500mg" />
-                        <flux:select size="sm" wire:model="currentRows.{{ $index }}.route" placeholder="Route">
+                    <div class="space-y-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-700" wire:key="current-{{ $index }}">
+                        <div class="flex items-center justify-between gap-3">
+                            <flux:heading size="sm">Medication {{ $index + 1 }}</flux:heading>
+                            @can('update', $reconciliation)
+                                <flux:button size="sm" variant="ghost" icon="trash" wire:click="removeCurrentRow({{ $index }})">Remove</flux:button>
+                            @endcan
+                        </div>
+
+                        <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.medication_name" label="Medication name" list="medication-name-options" autocomplete="off" required />
+                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.strength" label="Strength" placeholder="e.g. 500mg" />
+                        <div class="grid grid-cols-2 gap-2">
+                            <flux:input size="sm" wire:model="currentRows.{{ $index }}.dose_amount" type="number" step="0.01" label="Dose" />
+                            <flux:input size="sm" wire:model="currentRows.{{ $index }}.dose_unit" label="Unit" placeholder="mg" />
+                        </div>
+
+                        <flux:select size="sm" wire:model="currentRows.{{ $index }}.route" label="Route" placeholder="Select…">
                             @foreach (MedicationRoute::cases() as $option)
                                 <option value="{{ $option->value }}">{{ $option->value }}</option>
                             @endforeach
                         </flux:select>
-                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.frequency" placeholder="Frequency" />
-                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.indication" placeholder="Indication" />
-                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.ordered_by" placeholder="Ordered by" />
-                        @can('update', $reconciliation)
-                            <flux:button size="sm" variant="ghost" icon="trash" wire:click="removeCurrentRow({{ $index }})" class="sm:col-span-2">
-                                Remove
-                            </flux:button>
-                        @endcan
+                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.frequency" label="Frequency" list="medication-frequency-options" autocomplete="off" placeholder="e.g. Once Daily" />
+                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.timing" label="Timing" placeholder="e.g. Morning with breakfast" />
+
+                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.indication" label="Indication" />
+                        <flux:select size="sm" wire:model="currentRows.{{ $index }}.source_type" label="Source">
+                            @foreach (SourceType::cases() as $option)
+                                <option value="{{ $option->value }}">{{ str($option->value)->replace('_', ' ') }}</option>
+                            @endforeach
+                        </flux:select>
+                        <flux:select size="sm" wire:model="currentRows.{{ $index }}.is_patient_taking" label="Currently taking?">
+                            @foreach (TakingStatus::cases() as $option)
+                                <option value="{{ $option->value }}">{{ str($option->value)->replace('_', ' ') }}</option>
+                            @endforeach
+                        </flux:select>
+
+                        <flux:select size="sm" wire:model="currentRows.{{ $index }}.adherence_level" label="Adherence">
+                            @foreach (AdherenceLevel::cases() as $option)
+                                <option value="{{ $option->value }}">{{ $option->value }}</option>
+                            @endforeach
+                        </flux:select>
+                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.ordered_by" label="Ordered by" />
+                        @if (in_array($row['adherence_level'], [AdherenceLevel::Partial->value, AdherenceLevel::None->value], true))
+                            <flux:input size="sm" wire:model="currentRows.{{ $index }}.non_adherence_reason" label="Reason for non-adherence" class="md:col-span-3" />
+                        @endif
+                        </div>
                     </div>
                 @endforeach
             </div>
 
             @can('update', $reconciliation)
                 <div class="flex flex-wrap items-center gap-3">
-                    <flux:button size="sm" variant="primary" wire:click="saveAndCheckDiscrepancies">
-                        Save &amp; Check Discrepancies
-                    </flux:button>
-                    <flux:button size="sm" variant="ghost" wire:click="saveCurrentMedications">
-                        Save only
+                    <flux:button size="sm" variant="primary" wire:click="saveCurrentMedications">
+                        Save medications
                     </flux:button>
                 </div>
             @endcan
         </flux:card>
 
-        <flux:card class="space-y-3 bg-zinc-50 lg:order-2 dark:bg-zinc-800/40">
+        <flux:card class="space-y-3 bg-zinc-50 dark:bg-zinc-800/40">
             <flux:heading size="lg" class="text-zinc-600 dark:text-zinc-400">BPMH (reference)</flux:heading>
 
             @if ($bpmhList->isEmpty())
@@ -593,4 +705,7 @@ new #[Title('Reconciliation Verification')] class extends Component {
             @endif
         @endif
     </flux:card>
+
+    <x-medication-name-datalist />
+    <x-medication-frequency-datalist />
 </section>

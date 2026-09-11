@@ -3,6 +3,9 @@
 namespace App\Models;
 
 use App\Enums\MedicationRoute;
+use App\Enums\AdherenceLevel;
+use App\Enums\SourceType;
+use App\Enums\TakingStatus;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -21,7 +24,9 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $order_date
  */
 #[Fillable([
-    'reconciliation_id', 'medication_name', 'dose', 'route', 'frequency', 'indication', 'ordered_by', 'order_date',
+    'reconciliation_id', 'medication_name', 'strength', 'dose_amount', 'dose_unit', 'dose', 'route', 'frequency',
+    'timing', 'indication', 'is_patient_taking', 'adherence_level', 'non_adherence_reason', 'source_type',
+    'ordered_by', 'order_date',
 ])]
 class MedicationCurrent extends Model
 {
@@ -31,7 +36,11 @@ class MedicationCurrent extends Model
     protected function casts(): array
     {
         return [
+            'dose_amount' => 'decimal:2',
             'route' => MedicationRoute::class,
+            'is_patient_taking' => TakingStatus::class,
+            'adherence_level' => AdherenceLevel::class,
+            'source_type' => SourceType::class,
             'order_date' => 'date',
         ];
     }

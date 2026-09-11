@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'drugbank' => [
+        'key' => env('DRUGBANK_API_KEY'),
+        'region' => env('DRUGBANK_REGION', 'my'),
+        'enabled' => env('MEDICATION_SAFETY_REVIEW_ENABLED', false),
+    ],
+
 ];
