@@ -264,9 +264,7 @@ new #[Title('Ward Patients')] class extends Component {
                         </flux:badge>
                     </flux:table.cell>
                     <flux:table.cell align="end">
-                        @can('update', $patient)
-                            <flux:button :href="route('patients.edit', $patient)" wire:navigate variant="filled" size="sm" icon="pencil-square" />
-                        @endcan
+                        <flux:button :href="route('patients.show', $patient)" wire:navigate variant="filled" size="sm" icon="pencil-square" />
                     </flux:table.cell>
                 </flux:table.row>
             @empty

@@ -4,6 +4,7 @@ use App\Enums\DiscrepancySeverity;
 use App\Enums\DiscrepancyStatus;
 use App\Enums\AdherenceLevel;
 use App\Enums\MedicationRoute;
+use App\Enums\PatientStatus;
 use App\Enums\PharmacistAssessment;
 use App\Enums\ReconciliationStatus;
 use App\Enums\ReconciliationType;
@@ -24,6 +25,12 @@ new #[Title('Reconciliation Verification')] class extends Component {
     public string $type = '';
 
     public array $currentRows = [];
+
+    /**
+     * Which current-medication rows are showing the editable form instead of the
+     * compact listing view, keyed by their index in $currentRows.
+     */
+    public array $editingRows = [];
 
     public array $assessments = [];
 
@@ -47,6 +54,15 @@ new #[Title('Reconciliation Verification')] class extends Component {
         $this->reconciliation->update(['type' => $value]);
 
         Flux::toast('Reconciliation type updated.', variant: 'success');
+    }
+
+    /**
+     * Once a patient is discharged, their current-medication list becomes a locked
+     * historical record — mirrors the discharge lock used on medication history.
+     */
+    public function getIsEditableProperty(): bool
+    {
+        return $this->reconciliation->patient->status === PatientStatus::Active;
     }
 
     protected function loadCurrentRows(): void
@@ -118,7 +134,7 @@ new #[Title('Reconciliation Verification')] class extends Component {
         $value = (float) $result->result_value;
         $range = trim($result->reference_range);
 
-        if (preg_match('/^([\d.]+)\s*-\s*([\d.]+)$/', $range, $matches)) {
+        if (preg_match('/^([\d.]+)\s*[-–]\s*([\d.]+)$/u', $range, $matches)) {
             $low = (float) $matches[1];
             $high = (float) $matches[2];
         } elseif (preg_match('/^[<≤]\s*([\d.]+)$/u', $range, $matches)) {
@@ -150,6 +166,7 @@ new #[Title('Reconciliation Verification')] class extends Component {
     public function addCurrentRow(): void
     {
         $this->authorize('update', $this->reconciliation);
+        abort_unless($this->isEditable, 403, 'Cannot modify medications for a discharged patient.');
 
         $this->currentRows[] = [
             'id' => null,
@@ -167,11 +184,14 @@ new #[Title('Reconciliation Verification')] class extends Component {
             'source_type' => SourceType::PatientReport->value,
             'ordered_by' => '',
         ];
+
+        $this->editingRows[array_key_last($this->currentRows)] = true;
     }
 
     public function removeCurrentRow(int $index): void
     {
         $this->authorize('update', $this->reconciliation);
+        abort_unless($this->isEditable, 403, 'Cannot modify medications for a discharged patient.');
 
         $row = $this->currentRows[$index] ?? null;
 
@@ -181,11 +201,34 @@ new #[Title('Reconciliation Verification')] class extends Component {
 
         unset($this->currentRows[$index]);
         $this->currentRows = array_values($this->currentRows);
+        $this->editingRows = [];
+    }
+
+    /**
+     * Switches an already-saved medication row from the compact listing view into
+     * the editable form. Unsaved rows are always shown as a form already.
+     */
+    public function editRow(int $index): void
+    {
+        $this->authorize('update', $this->reconciliation);
+        abort_unless($this->isEditable, 403, 'Cannot modify medications for a discharged patient.');
+
+        $this->editingRows[$index] = true;
+    }
+
+    /**
+     * Collapses a saved medication row back to the compact listing view without
+     * discarding any typed-but-unsaved changes — they remain until "Save medications".
+     */
+    public function collapseRow(int $index): void
+    {
+        $this->editingRows[$index] = false;
     }
 
     public function saveCurrentMedications(): void
     {
         $this->authorize('update', $this->reconciliation);
+        abort_unless($this->isEditable, 403, 'Cannot modify medications for a discharged patient.');
 
         $validated = $this->validate([
             'currentRows.*.medication_name' => ['required', 'string', 'max:255'],
@@ -221,6 +264,7 @@ new #[Title('Reconciliation Verification')] class extends Component {
         }
 
         $this->loadCurrentRows();
+        $this->editingRows = [];
 
         Flux::toast('Current medication list saved.', variant: 'success');
     }
@@ -316,7 +360,7 @@ new #[Title('Reconciliation Verification')] class extends Component {
     }
 }; ?>
 
-<section class="w-full max-w-6xl space-y-6">
+<section class="mx-auto w-full max-w-6xl space-y-6">
     {{-- Header: identity, status, and the reconciliation-type control merged in directly (no separate page) --}}
     <div class="flex flex-wrap items-start justify-between gap-4">
         <div class="space-y-3">
@@ -539,70 +583,117 @@ new #[Title('Reconciliation Verification')] class extends Component {
         <flux:card class="space-y-4 xl:col-span-2">
             <div class="flex items-center justify-between">
                 <flux:heading size="lg">Current / intended medications</flux:heading>
-                @can('update', $reconciliation)
-                    <flux:button size="sm" icon="plus" wire:click="addCurrentRow">Add</flux:button>
-                @endcan
+                @if ($this->isEditable)
+                    @can('update', $reconciliation)
+                        <flux:button size="sm" icon="plus" wire:click="addCurrentRow">Add</flux:button>
+                    @endcan
+                @endif
             </div>
+
+            @if (! $this->isEditable && count($currentRows) > 0)
+                <flux:callout variant="secondary" icon="lock-closed" heading="Read-only" text="This patient has been discharged. The medication list below is a locked record and can no longer be modified." />
+            @endif
 
             <div class="space-y-3">
-                @foreach ($currentRows as $index => $row)
+                @forelse ($currentRows as $index => $row)
+                    @php $isEditing = $this->isEditable && ($row['id'] === null || ($editingRows[$index] ?? false)); @endphp
                     <div class="space-y-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-700" wire:key="current-{{ $index }}">
-                        <div class="flex items-center justify-between gap-3">
-                            <flux:heading size="sm">Medication {{ $index + 1 }}</flux:heading>
-                            @can('update', $reconciliation)
-                                <flux:button size="sm" variant="ghost" icon="trash" wire:click="removeCurrentRow({{ $index }})">Remove</flux:button>
-                            @endcan
-                        </div>
+                        @if ($isEditing)
+                            <div class="flex items-center justify-between gap-3">
+                                <flux:heading size="sm">Medication {{ $index + 1 }}</flux:heading>
+                                @can('update', $reconciliation)
+                                    <div class="flex items-center gap-2">
+                                        @if ($row['id'] !== null)
+                                            <flux:button size="sm" variant="ghost" wire:click="collapseRow({{ $index }})">Done</flux:button>
+                                        @endif
+                                        <flux:button size="sm" variant="ghost" icon="trash" wire:click="removeCurrentRow({{ $index }})">Remove</flux:button>
+                                    </div>
+                                @endcan
+                            </div>
 
-                        <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
-                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.medication_name" label="Medication name" list="medication-name-options" autocomplete="off" required />
-                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.strength" label="Strength" placeholder="e.g. 500mg" />
-                        <div class="grid grid-cols-2 gap-2">
-                            <flux:input size="sm" wire:model="currentRows.{{ $index }}.dose_amount" type="number" step="0.01" label="Dose" />
-                            <flux:input size="sm" wire:model="currentRows.{{ $index }}.dose_unit" label="Unit" placeholder="mg" />
-                        </div>
+                            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                            <flux:input size="sm" wire:model="currentRows.{{ $index }}.medication_name" label="Medication name" list="medication-name-options" autocomplete="off" required />
+                            <flux:input size="sm" wire:model="currentRows.{{ $index }}.strength" label="Strength" placeholder="e.g. 500mg" />
+                            <div class="grid grid-cols-2 gap-2">
+                                <flux:input size="sm" wire:model="currentRows.{{ $index }}.dose_amount" type="number" step="0.01" label="Dose" />
+                                <flux:input size="sm" wire:model="currentRows.{{ $index }}.dose_unit" label="Unit" placeholder="mg" />
+                            </div>
 
-                        <flux:select size="sm" wire:model="currentRows.{{ $index }}.route" label="Route" placeholder="Select…">
-                            @foreach (MedicationRoute::cases() as $option)
-                                <option value="{{ $option->value }}">{{ $option->value }}</option>
-                            @endforeach
-                        </flux:select>
-                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.frequency" label="Frequency" list="medication-frequency-options" autocomplete="off" placeholder="e.g. Once Daily" />
-                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.timing" label="Timing" placeholder="e.g. Morning with breakfast" />
+                            <flux:select size="sm" wire:model="currentRows.{{ $index }}.route" label="Route" placeholder="Select…">
+                                @foreach (MedicationRoute::cases() as $option)
+                                    <option value="{{ $option->value }}">{{ $option->value }}</option>
+                                @endforeach
+                            </flux:select>
+                            <flux:input size="sm" wire:model="currentRows.{{ $index }}.frequency" label="Frequency" list="medication-frequency-options" autocomplete="off" placeholder="e.g. Once Daily" />
+                            <flux:input size="sm" wire:model="currentRows.{{ $index }}.timing" label="Timing" placeholder="e.g. Morning with breakfast" />
 
-                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.indication" label="Indication" />
-                        <flux:select size="sm" wire:model="currentRows.{{ $index }}.source_type" label="Source">
-                            @foreach (SourceType::cases() as $option)
-                                <option value="{{ $option->value }}">{{ str($option->value)->replace('_', ' ') }}</option>
-                            @endforeach
-                        </flux:select>
-                        <flux:select size="sm" wire:model="currentRows.{{ $index }}.is_patient_taking" label="Currently taking?">
-                            @foreach (TakingStatus::cases() as $option)
-                                <option value="{{ $option->value }}">{{ str($option->value)->replace('_', ' ') }}</option>
-                            @endforeach
-                        </flux:select>
+                            <flux:input size="sm" wire:model="currentRows.{{ $index }}.indication" label="Indication" />
+                            <flux:select size="sm" wire:model="currentRows.{{ $index }}.source_type" label="Source">
+                                @foreach (SourceType::cases() as $option)
+                                    <option value="{{ $option->value }}">{{ str($option->value)->replace('_', ' ') }}</option>
+                                @endforeach
+                            </flux:select>
+                            <flux:select size="sm" wire:model="currentRows.{{ $index }}.is_patient_taking" label="Currently taking?">
+                                @foreach (TakingStatus::cases() as $option)
+                                    <option value="{{ $option->value }}">{{ str($option->value)->replace('_', ' ') }}</option>
+                                @endforeach
+                            </flux:select>
 
-                        <flux:select size="sm" wire:model="currentRows.{{ $index }}.adherence_level" label="Adherence">
-                            @foreach (AdherenceLevel::cases() as $option)
-                                <option value="{{ $option->value }}">{{ $option->value }}</option>
-                            @endforeach
-                        </flux:select>
-                        <flux:input size="sm" wire:model="currentRows.{{ $index }}.ordered_by" label="Ordered by" />
-                        @if (in_array($row['adherence_level'], [AdherenceLevel::Partial->value, AdherenceLevel::None->value], true))
-                            <flux:input size="sm" wire:model="currentRows.{{ $index }}.non_adherence_reason" label="Reason for non-adherence" class="md:col-span-3" />
+                            <flux:select size="sm" wire:model="currentRows.{{ $index }}.adherence_level" label="Adherence">
+                                @foreach (AdherenceLevel::cases() as $option)
+                                    <option value="{{ $option->value }}">{{ $option->value }}</option>
+                                @endforeach
+                            </flux:select>
+                            <flux:input size="sm" wire:model="currentRows.{{ $index }}.ordered_by" label="Ordered by" />
+                            @if (in_array($row['adherence_level'], [AdherenceLevel::Partial->value, AdherenceLevel::None->value], true))
+                                <flux:input size="sm" wire:model="currentRows.{{ $index }}.non_adherence_reason" label="Reason for non-adherence" class="md:col-span-3" />
+                            @endif
+                            </div>
+                        @else
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <flux:heading size="sm">{{ $row['medication_name'] }}</flux:heading>
+                                        @if (filled($row['strength']))
+                                            <flux:text class="text-sm text-zinc-500">{{ $row['strength'] }}</flux:text>
+                                        @endif
+                                        <flux:badge size="sm" :color="$row['is_patient_taking'] === TakingStatus::Yes->value ? 'emerald' : 'zinc'">
+                                            {{ str($row['is_patient_taking'])->replace('_', ' ') }}
+                                        </flux:badge>
+                                    </div>
+                                    <div class="mt-1 text-sm text-zinc-500">
+                                        {{ collect([trim($row['dose_amount'].' '.$row['dose_unit']), $row['route'], $row['frequency'], $row['timing']])->filter()->implode(' · ') ?: 'No dosing details recorded' }}
+                                    </div>
+                                    @if (filled($row['indication']))
+                                        <div class="text-xs text-zinc-500">For: {{ $row['indication'] }}</div>
+                                    @endif
+                                </div>
+
+                                @if ($this->isEditable)
+                                    @can('update', $reconciliation)
+                                        <div class="flex shrink-0 items-center gap-2">
+                                            <flux:button size="sm" variant="ghost" icon="pencil" wire:click="editRow({{ $index }})" />
+                                            <flux:button size="sm" variant="ghost" icon="trash" wire:click="removeCurrentRow({{ $index }})" />
+                                        </div>
+                                    @endcan
+                                @endif
+                            </div>
                         @endif
-                        </div>
                     </div>
-                @endforeach
+                @empty
+                    <flux:text class="text-sm text-zinc-500">No current or intended medications recorded yet.</flux:text>
+                @endforelse
             </div>
 
-            @can('update', $reconciliation)
-                <div class="flex flex-wrap items-center gap-3">
-                    <flux:button size="sm" variant="primary" wire:click="saveCurrentMedications">
-                        Save medications
-                    </flux:button>
-                </div>
-            @endcan
+            @if ($this->isEditable)
+                @can('update', $reconciliation)
+                    <div class="flex flex-wrap items-center gap-3">
+                        <flux:button size="sm" variant="primary" wire:click="saveCurrentMedications">
+                            Save medications
+                        </flux:button>
+                    </div>
+                @endcan
+            @endif
         </flux:card>
 
         <flux:card class="space-y-3 bg-zinc-50 dark:bg-zinc-800/40">
@@ -624,87 +715,6 @@ new #[Title('Reconciliation Verification')] class extends Component {
             @endif
         </flux:card>
     </div>
-
-    {{-- Discrepancies / warnings — unresolved items lead, resolved history is tucked away --}}
-    <flux:card class="space-y-4">
-        @php
-            $resolvedValues = [DiscrepancyStatus::Resolved->value, DiscrepancyStatus::Closed->value];
-            $resolvedCount = collect($assessments)->whereIn('status', $resolvedValues)->count();
-            $visibleUnresolvedCount = collect($assessments)->reject(fn ($a) => in_array($a['status'], $resolvedValues, true))->count();
-        @endphp
-
-        <div class="flex items-center justify-between">
-            <flux:heading size="lg">Discrepancies</flux:heading>
-            @if ($resolvedCount > 0)
-                <flux:button size="sm" variant="ghost" wire:click="$toggle('showResolvedDiscrepancies')">
-                    {{ $showResolvedDiscrepancies ? 'Hide' : 'Show' }} resolved ({{ $resolvedCount }})
-                </flux:button>
-            @endif
-        </div>
-
-        @if (empty($assessments))
-            <flux:text class="text-sm text-zinc-500">No discrepancies identified. Run a discrepancy check after entering both medication lists.</flux:text>
-        @else
-            @if ($visibleUnresolvedCount === 0 && ! $showResolvedDiscrepancies)
-                <flux:callout variant="success" icon="check-circle" heading="All discrepancies resolved" />
-            @else
-                <div class="space-y-3">
-                    @foreach ($assessments as $index => $item)
-                        @continue(! $showResolvedDiscrepancies && in_array($item['status'], $resolvedValues, true))
-                        @php
-                            $isResolved = in_array($item['status'], $resolvedValues, true);
-                            $severityBorder = match ($item['severity']) {
-                                'Critical' => 'border-l-red-500',
-                                'Major' => 'border-l-orange-500',
-                                'Minor' => 'border-l-yellow-500',
-                                default => 'border-l-zinc-300 dark:border-l-zinc-600',
-                            };
-                        @endphp
-                        <div
-                            class="space-y-3 rounded-lg border border-l-4 border-zinc-200 p-4 dark:border-zinc-700 {{ $severityBorder }} {{ $isResolved ? 'opacity-60' : '' }}"
-                            wire:key="discrepancy-{{ $item['id'] }}"
-                        >
-                            <div class="flex flex-wrap items-center gap-2">
-                                <flux:badge size="sm" :color="DiscrepancySeverity::from($item['severity'])->color()">{{ $item['severity'] }}</flux:badge>
-                                <flux:text class="font-medium">{{ $item['type'] }}</flux:text>
-                                @if ($isResolved)
-                                    <flux:badge size="sm" color="emerald">{{ str($item['status'])->replace('_', ' ') }}</flux:badge>
-                                @endif
-                            </div>
-                            <flux:text class="text-sm text-zinc-500">{{ $item['description'] }}</flux:text>
-
-                            @can('pharmacistAssess', $reconciliation)
-                                <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                                    <flux:select size="sm" wire:model="assessments.{{ $index }}.pharmacist_assessment" label="Assessment" placeholder="Select…">
-                                        @foreach (PharmacistAssessment::cases() as $option)
-                                            <option value="{{ $option->value }}">{{ str($option->value)->replace('_', ' ') }}</option>
-                                        @endforeach
-                                    </flux:select>
-                                    <flux:select size="sm" wire:model="assessments.{{ $index }}.status" label="Status">
-                                        @foreach (DiscrepancyStatus::cases() as $option)
-                                            <option value="{{ $option->value }}">{{ str($option->value)->replace('_', ' ') }}</option>
-                                        @endforeach
-                                    </flux:select>
-                                    <flux:input size="sm" wire:model="assessments.{{ $index }}.clinical_note" label="Clinical note" />
-                                </div>
-                            @else
-                                <flux:text class="text-sm">
-                                    Status: {{ str($item['status'])->replace('_', ' ') }}
-                                    @if ($item['pharmacist_assessment'])
-                                        · {{ str($item['pharmacist_assessment'])->replace('_', ' ') }}
-                                    @endif
-                                </flux:text>
-                            @endcan
-                        </div>
-                    @endforeach
-                </div>
-
-                @can('pharmacistAssess', $reconciliation)
-                    <flux:button variant="primary" wire:click="saveAssessments">Save Assessments</flux:button>
-                @endcan
-            @endif
-        @endif
-    </flux:card>
 
     <x-medication-name-datalist />
     <x-medication-frequency-datalist />

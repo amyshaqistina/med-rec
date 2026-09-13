@@ -55,7 +55,7 @@ new #[Title('Lab Results')] class extends Component {
     }
 }; ?>
 
-<section class="w-full max-w-4xl space-y-6">
+<section class="mx-auto w-full max-w-4xl space-y-6">
     <div class="flex items-center justify-between">
         <div>
             <flux:heading size="xl">Lab Results — {{ $patient->full_name }}</flux:heading>

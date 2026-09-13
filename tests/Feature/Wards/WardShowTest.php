@@ -89,6 +89,18 @@ test('discharged patients can be revealed with the include-discharged filter', f
         ->assertSee('Siti');
 });
 
+test('ward patient list action button links to the patient details page', function () {
+    $this->actingAs(User::factory()->create());
+
+    $ward = Ward::factory()->create();
+    $patient = Patient::factory()->create(['ward_id' => $ward->id]);
+
+    $this->get(route('wards.show', $ward))
+        ->assertOk()
+        ->assertSee(route('patients.show', $patient), escape: false)
+        ->assertDontSee(route('patients.edit', $patient), escape: false);
+});
+
 test('ward patient list can be exported as csv', function () {
     $this->actingAs(User::factory()->create());
 

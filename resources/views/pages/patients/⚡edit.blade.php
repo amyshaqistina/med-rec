@@ -133,7 +133,7 @@ new #[Title('Edit Patient')] class extends Component {
     }
 }; ?>
 
-<section class="w-full max-w-4xl space-y-6">
+<section class="mx-auto w-full max-w-4xl space-y-6">
     <div>
         <flux:heading size="xl">Edit {{ $patient->full_name }}</flux:heading>
         <flux:subheading>MRN {{ $patient->mrn }}</flux:subheading>

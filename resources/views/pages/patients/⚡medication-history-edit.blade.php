@@ -111,7 +111,7 @@ new #[Title('Edit Medication History')] class extends Component {
     }
 }; ?>
 
-<section class="w-full max-w-3xl space-y-6">
+<section class="mx-auto w-full max-w-3xl space-y-6">
     <div class="flex items-center justify-between">
         <div>
             <flux:heading size="xl">Edit Medication History — {{ $patient->full_name }}</flux:heading>

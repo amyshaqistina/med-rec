@@ -25,7 +25,7 @@ new #[Title('Reconciliation History')] class extends Component {
     }
 }; ?>
 
-<section class="w-full max-w-6xl space-y-6">
+<section class="mx-auto w-full max-w-6xl space-y-6">
     <div class="flex items-center justify-between gap-4">
         <div>
             <flux:heading size="xl">Reconciliation history — {{ $patient->full_name }}</flux:heading>

@@ -13,6 +13,10 @@ new #[Title('Patient Details')] class extends Component {
 
     public bool $showDischargeModal = false;
 
+    public bool $showAllLabResults = false;
+
+    public bool $showAllMedicationHistory = false;
+
     public function mount(Patient $patient): void
     {
         $this->authorize('view', $patient);
@@ -54,20 +58,36 @@ new #[Title('Patient Details')] class extends Component {
     {
         $latestLabDate = $this->patient->labResults()->max('taken_at');
 
+        $labResults = $this->showAllLabResults
+            ? $this->patient->labResults()->orderByDesc('taken_at')->orderBy('test_name')->get()
+            : ($latestLabDate
+                ? $this->patient->labResults()->where('taken_at', $latestLabDate)->orderBy('test_name')->get()
+                : collect());
+
+        $medicationHistoriesQuery = $this->patient->medicationHistories()->latest();
+
         return [
-            'medicationHistories' => $this->patient->medicationHistories()->latest()->limit(5)->get(),
+            'medicationHistories' => $this->showAllMedicationHistory
+                ? $medicationHistoriesQuery->get()
+                : $medicationHistoriesQuery->limit(5)->get(),
+            'medicationHistoryTotal' => $this->patient->medicationHistories()->count(),
             'latestReconciliation' => $this->patient->reconciliations()
                 ->with('medicationCurrents')
                 ->latest('started_at')
                 ->first(),
-            'latestLabResults' => $latestLabDate
-                ? $this->patient->labResults()->where('taken_at', $latestLabDate)->orderBy('test_name')->get()
-                : collect(),
+            'labResults' => $labResults,
+            'latestLabDate' => $labResults->max('taken_at'),
         ];
     }
 }; ?>
 
 <section class="w-full space-y-6">
+    @if ($patient->ward)
+        <flux:button :href="route('wards.show', $patient->ward)" wire:navigate variant="ghost" size="sm" icon="arrow-left">
+            Back to {{ $patient->ward->name }}
+        </flux:button>
+    @endif
+
     <div class="flex flex-wrap items-center justify-between gap-4">
         <div>
             <div class="flex flex-wrap items-center gap-3">
@@ -135,19 +155,21 @@ new #[Title('Patient Details')] class extends Component {
     <flux:card class="space-y-4">
         <div class="flex items-center justify-between">
             <div>
-                <flux:heading size="lg">Latest lab results</flux:heading>
-                @if ($latestLabResults->isNotEmpty())
-                    <flux:subheading>Drawn {{ $latestLabResults->first()->taken_at->format('d/m/Y H:i') }}</flux:subheading>
+                <flux:heading size="lg">{{ $showAllLabResults ? 'All lab results' : 'Latest lab results' }}</flux:heading>
+                @if ($labResults->isNotEmpty())
+                    <flux:subheading>
+                        {{ $showAllLabResults ? 'All draws, most recent first' : 'Drawn '.$latestLabDate?->format('d/m/Y H:i') }}
+                    </flux:subheading>
                 @endif
             </div>
-            @if ($latestLabResults->isNotEmpty())
-                <flux:button size="sm" variant="ghost" :href="route('patients.lab-results', $patient)" wire:navigate>
-                    See all
+            @if ($labResults->isNotEmpty() || $showAllLabResults)
+                <flux:button size="sm" variant="ghost" wire:click="$toggle('showAllLabResults')">
+                    {{ $showAllLabResults ? 'Show latest only' : 'See all' }}
                 </flux:button>
             @endif
         </div>
 
-        @if ($latestLabResults->isEmpty())
+        @if ($labResults->isEmpty())
             <flux:text class="text-sm text-zinc-500">No lab results recorded yet.</flux:text>
         @else
             <flux:table>
@@ -158,7 +180,7 @@ new #[Title('Patient Details')] class extends Component {
                     <flux:table.column>Date</flux:table.column>
                 </flux:table.columns>
                 <flux:table.rows>
-                    @foreach ($latestLabResults as $result)
+                    @foreach ($labResults as $result)
                         <flux:table.row :key="$result->id">
                             <flux:table.cell variant="strong">{{ $result->test_name }}</flux:table.cell>
                             <flux:table.cell>{{ $result->result_value }} {{ $result->unit }}</flux:table.cell>
@@ -176,13 +198,15 @@ new #[Title('Patient Details')] class extends Component {
             <div>
                 <flux:heading size="lg">Medication history (BPMH)</flux:heading>
                 @if ($medicationHistories->isNotEmpty())
-                    <flux:subheading>Latest entries, most recent first</flux:subheading>
+                    <flux:subheading>
+                        {{ $showAllMedicationHistory ? 'All entries, most recent first' : 'Latest entries, most recent first' }}
+                    </flux:subheading>
                 @endif
             </div>
             <div class="flex items-center gap-2">
-                @if ($medicationHistories->isNotEmpty())
-                    <flux:button size="sm" variant="ghost" :href="route('patients.medication-history.index', $patient)" wire:navigate>
-                        See all
+                @if ($medicationHistoryTotal > 5 || $showAllMedicationHistory)
+                    <flux:button size="sm" variant="ghost" wire:click="$toggle('showAllMedicationHistory')">
+                        {{ $showAllMedicationHistory ? 'Show latest only' : 'See all' }}
                     </flux:button>
                 @endif
                 @can('update', $patient)

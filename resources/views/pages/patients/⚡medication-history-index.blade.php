@@ -27,7 +27,7 @@ new #[Title('Medication History')] class extends Component {
     }
 }; ?>
 
-<section class="w-full max-w-5xl space-y-6">
+<section class="mx-auto w-full max-w-5xl space-y-6">
     <div class="flex items-center justify-between">
         <div>
             <flux:heading size="xl">Medication History — {{ $patient->full_name }}</flux:heading>

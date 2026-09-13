@@ -4,6 +4,8 @@ use App\Models\LabResult;
 use App\Models\MedicationHistory;
 use App\Models\Patient;
 use App\Models\User;
+use App\Models\Ward;
+use Livewire\Livewire;
 
 test('patient show page displays demographics and risk badge', function () {
     $this->actingAs(User::factory()->create());
@@ -15,6 +17,28 @@ test('patient show page displays demographics and risk badge', function () {
         ->assertSee($patient->full_name)
         ->assertSee($patient->mrn)
         ->assertSee('High risk', escape: false);
+});
+
+test('patient show page links back to the patient\'s ward', function () {
+    $this->actingAs(User::factory()->create());
+
+    $ward = Ward::factory()->create();
+    $patient = Patient::factory()->inWard($ward)->create();
+
+    $this->get(route('patients.show', $patient))
+        ->assertOk()
+        ->assertSee('Back to '.$ward->name)
+        ->assertSee(route('wards.show', $ward), escape: false);
+});
+
+test('patient show page has no back-to-ward link when the patient has no ward', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create(['ward_id' => null]);
+
+    $this->get(route('patients.show', $patient))
+        ->assertOk()
+        ->assertDontSee('Back to');
 });
 
 test('allergy banner shows documented allergies', function () {
@@ -70,6 +94,31 @@ test('patient show page only shows the latest draw date lab results', function (
         ->assertDontSee('Sodium');
 });
 
+test('see all expands lab results in place instead of navigating away', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+
+    LabResult::factory()->create([
+        'patient_id' => $patient->id,
+        'test_name' => 'Sodium',
+        'taken_at' => now()->subDays(10),
+    ]);
+
+    LabResult::factory()->create([
+        'patient_id' => $patient->id,
+        'test_name' => 'Potassium',
+        'taken_at' => now(),
+    ]);
+
+    Livewire::test('pages::patients.show', ['patient' => $patient])
+        ->assertSee('Potassium')
+        ->assertDontSee('Sodium')
+        ->set('showAllLabResults', true)
+        ->assertSee('Potassium')
+        ->assertSee('Sodium');
+});
+
 test('patient show page only shows the 5 most recent medication history entries', function () {
     $this->actingAs(User::factory()->create());
 
@@ -86,4 +135,22 @@ test('patient show page only shows the 5 most recent medication history entries'
         ->assertOk()
         ->assertDontSee('Oldest Medication')
         ->assertSee('See all');
+});
+
+test('see all expands medication history in place instead of navigating away', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+
+    MedicationHistory::factory()->count(5)->create(['patient_id' => $patient->id]);
+    MedicationHistory::factory()->create([
+        'patient_id' => $patient->id,
+        'medication_name' => 'Oldest Medication',
+        'created_at' => now()->subYear(),
+    ]);
+
+    Livewire::test('pages::patients.show', ['patient' => $patient])
+        ->assertDontSee('Oldest Medication')
+        ->set('showAllMedicationHistory', true)
+        ->assertSee('Oldest Medication');
 });
