@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Database\Factories\LabResultFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -23,7 +24,7 @@ use Illuminate\Support\Carbon;
 ])]
 class LabResult extends Model
 {
-    /** @use HasFactory<\Database\Factories\LabResultFactory> */
+    /** @use HasFactory<LabResultFactory> */
     use HasFactory;
 
     protected function casts(): array
@@ -47,5 +48,48 @@ class LabResult extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    /**
+     * Best-effort scanning aid only — reference_range is free text, not structured data,
+     * so this is a heuristic, not a clinically validated flag. Always confirm the actual
+     * reference range before acting on it.
+     */
+    public function flag(): ?string
+    {
+        if (! is_numeric($this->result_value) || blank($this->reference_range)) {
+            return null;
+        }
+
+        $value = (float) $this->result_value;
+        $range = trim($this->reference_range);
+
+        if (preg_match('/^([\d.]+)\s*[-–]\s*([\d.]+)$/u', $range, $matches)) {
+            $low = (float) $matches[1];
+            $high = (float) $matches[2];
+        } elseif (preg_match('/^[<≤]\s*([\d.]+)$/u', $range, $matches)) {
+            $low = null;
+            $high = (float) $matches[1];
+        } elseif (preg_match('/^[>≥]\s*([\d.]+)$/u', $range, $matches)) {
+            $low = (float) $matches[1];
+            $high = null;
+        } else {
+            return null;
+        }
+
+        $span = ($low !== null && $high !== null)
+            ? max($high - $low, 0.0001)
+            : max((float) ($high ?? $low), 0.0001);
+        $margin = $span * 0.1;
+
+        if ($low !== null && $value < $low) {
+            return $value < $low - $margin ? 'abnormal' : 'borderline';
+        }
+
+        if ($high !== null && $value > $high) {
+            return $value > $high + $margin ? 'abnormal' : 'borderline';
+        }
+
+        return 'normal';
     }
 }

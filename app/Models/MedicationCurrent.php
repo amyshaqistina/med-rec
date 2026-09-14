@@ -2,10 +2,12 @@
 
 namespace App\Models;
 
-use App\Enums\MedicationRoute;
 use App\Enums\AdherenceLevel;
+use App\Enums\MedicationRoute;
+use App\Enums\SafetyCheckStatus;
 use App\Enums\SourceType;
 use App\Enums\TakingStatus;
+use Database\Factories\MedicationCurrentFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -22,15 +24,19 @@ use Illuminate\Support\Carbon;
  * @property string|null $indication
  * @property string|null $ordered_by
  * @property Carbon|null $order_date
+ * @property SafetyCheckStatus $safety_check_status
+ * @property array|null $safety_label_data
+ * @property array|null $safety_flags
+ * @property Carbon|null $safety_checked_at
  */
 #[Fillable([
     'reconciliation_id', 'medication_name', 'strength', 'dose_amount', 'dose_unit', 'dose', 'route', 'frequency',
     'timing', 'indication', 'is_patient_taking', 'adherence_level', 'non_adherence_reason', 'source_type',
-    'ordered_by', 'order_date',
+    'ordered_by', 'order_date', 'safety_check_status', 'safety_label_data', 'safety_flags', 'safety_checked_at',
 ])]
 class MedicationCurrent extends Model
 {
-    /** @use HasFactory<\Database\Factories\MedicationCurrentFactory> */
+    /** @use HasFactory<MedicationCurrentFactory> */
     use HasFactory;
 
     protected function casts(): array
@@ -42,6 +48,10 @@ class MedicationCurrent extends Model
             'adherence_level' => AdherenceLevel::class,
             'source_type' => SourceType::class,
             'order_date' => 'date',
+            'safety_check_status' => SafetyCheckStatus::class,
+            'safety_label_data' => 'array',
+            'safety_flags' => 'array',
+            'safety_checked_at' => 'datetime',
         ];
     }
 

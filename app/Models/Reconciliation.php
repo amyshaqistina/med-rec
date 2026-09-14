@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\ReconciliationStatus;
 use App\Enums\ReconciliationType;
+use Database\Factories\ReconciliationFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -29,7 +30,7 @@ use Illuminate\Support\Carbon;
 ])]
 class Reconciliation extends Model
 {
-    /** @use HasFactory<\Database\Factories\ReconciliationFactory> */
+    /** @use HasFactory<ReconciliationFactory> */
     use HasFactory;
 
     protected function casts(): array
@@ -76,12 +77,6 @@ class Reconciliation extends Model
     public function discrepancies(): HasMany
     {
         return $this->hasMany(Discrepancy::class);
-    }
-
-    /** @return HasMany<MedicationSafetyReview, $this> */
-    public function medicationSafetyReviews(): HasMany
-    {
-        return $this->hasMany(MedicationSafetyReview::class);
     }
 
     /**

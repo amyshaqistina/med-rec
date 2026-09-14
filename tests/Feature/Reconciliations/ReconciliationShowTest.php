@@ -4,7 +4,9 @@ use App\Enums\DiscrepancyStatus;
 use App\Enums\PharmacistAssessment;
 use App\Enums\ReconciliationStatus;
 use App\Enums\ReconciliationType;
+use App\Enums\SafetyCheckStatus;
 use App\Enums\TakingStatus;
+use App\Jobs\CheckMedicationSafetyJob;
 use App\Models\Discrepancy;
 use App\Models\LabResult;
 use App\Models\MedicationCurrent;
@@ -12,6 +14,7 @@ use App\Models\MedicationHistory;
 use App\Models\Patient;
 use App\Models\Reconciliation;
 use App\Models\User;
+use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 
 test('bpmh and current medications are both displayed', function () {
@@ -226,6 +229,89 @@ test('current medications become a locked record once the patient is discharged'
         ->assertDontSee('Save medications')
         ->call('editRow', 0)
         ->assertForbidden();
+});
+
+test('saving a new medication dispatches a safety check', function () {
+    Queue::fake([CheckMedicationSafetyJob::class]);
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+    $reconciliation = Reconciliation::factory()->create(['patient_id' => $patient->id]);
+
+    Livewire::test('pages::reconciliations.show', ['reconciliation' => $reconciliation])
+        ->call('addCurrentRow')
+        ->set('currentRows.0.medication_name', 'Metformin')
+        ->call('saveCurrentMedications');
+
+    Queue::assertPushed(CheckMedicationSafetyJob::class, 1);
+});
+
+test('changing a medication dose re-dispatches the safety check and clears stale flags', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+    $reconciliation = Reconciliation::factory()->create(['patient_id' => $patient->id]);
+    $medication = MedicationCurrent::factory()->safetyComplete([
+        ['severity' => 'moderate', 'category' => 'interaction', 'explanation' => 'Stale finding.'],
+    ])->create([
+        'reconciliation_id' => $reconciliation->id,
+        'medication_name' => 'Amlodipine',
+        'dose_amount' => '5',
+        'dose_unit' => 'mg',
+    ]);
+
+    Queue::fake([CheckMedicationSafetyJob::class]);
+
+    Livewire::test('pages::reconciliations.show', ['reconciliation' => $reconciliation])
+        ->set('currentRows.0.dose_amount', '10')
+        ->call('saveCurrentMedications');
+
+    Queue::assertPushed(CheckMedicationSafetyJob::class, 1);
+    expect($medication->fresh()->safety_check_status)->toBe(SafetyCheckStatus::Pending);
+    expect($medication->fresh()->safety_flags)->toBeNull();
+});
+
+test('saving an unrelated field edit does not re-dispatch the safety check', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+    $reconciliation = Reconciliation::factory()->create(['patient_id' => $patient->id]);
+    MedicationCurrent::factory()->safetyComplete()->create([
+        'reconciliation_id' => $reconciliation->id,
+        'medication_name' => 'Amlodipine',
+        'dose_amount' => '5',
+        'dose_unit' => 'mg',
+        'dose' => '5.00 mg',
+        'frequency' => 'Once Daily',
+        'indication' => 'Hypertension',
+    ]);
+
+    Queue::fake([CheckMedicationSafetyJob::class]);
+
+    Livewire::test('pages::reconciliations.show', ['reconciliation' => $reconciliation])
+        ->set('currentRows.0.indication', 'Blood pressure control')
+        ->call('saveCurrentMedications');
+
+    Queue::assertNotPushed(CheckMedicationSafetyJob::class);
+});
+
+test('the re-check action resets status to pending and dispatches a new safety check', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+    $reconciliation = Reconciliation::factory()->create(['patient_id' => $patient->id]);
+    $medication = MedicationCurrent::factory()->safetyUnavailable()->create([
+        'reconciliation_id' => $reconciliation->id,
+        'medication_name' => 'Amlodipine',
+    ]);
+
+    Queue::fake([CheckMedicationSafetyJob::class]);
+
+    Livewire::test('pages::reconciliations.show', ['reconciliation' => $reconciliation])
+        ->call('recheckMedicationSafety', $medication->id);
+
+    Queue::assertPushed(CheckMedicationSafetyJob::class, 1);
+    expect($medication->fresh()->safety_check_status)->toBe(SafetyCheckStatus::Pending);
 });
 
 test('resolved discrepancies are hidden until toggled visible', function () {

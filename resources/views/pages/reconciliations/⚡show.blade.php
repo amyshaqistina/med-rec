@@ -8,13 +8,14 @@ use App\Enums\PatientStatus;
 use App\Enums\PharmacistAssessment;
 use App\Enums\ReconciliationStatus;
 use App\Enums\ReconciliationType;
+use App\Enums\SafetyCheckStatus;
 use App\Enums\SourceType;
 use App\Enums\TakingStatus;
+use App\Jobs\CheckMedicationSafetyJob;
 use App\Models\Discrepancy;
 use App\Models\LabResult;
 use App\Models\MedicationCurrent;
 use App\Models\Reconciliation;
-use App\Services\DrugBankMedicationSafetyReviewService;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -45,6 +46,22 @@ new #[Title('Reconciliation Verification')] class extends Component {
 
         $this->loadCurrentRows();
         $this->loadAssessments();
+        $this->dispatchSafetyChecksNeverAttempted();
+    }
+
+    /**
+     * Recovers medications that are sitting at the default "pending" status with no
+     * checked_at timestamp — i.e. a safety check was never actually dispatched for
+     * them (pre-existing/seeded rows created outside saveCurrentMedications(), or a
+     * row from before this feature existed). Without this, the safety box would show
+     * "Checking…" forever with nothing ever resolving it.
+     */
+    private function dispatchSafetyChecksNeverAttempted(): void
+    {
+        $this->reconciliation->medicationCurrents()
+            ->where('safety_check_status', SafetyCheckStatus::Pending)
+            ->whereNull('safety_checked_at')
+            ->each(fn (MedicationCurrent $medication) => CheckMedicationSafetyJob::dispatch($medication));
     }
 
     public function updatedType(string $value): void
@@ -65,7 +82,7 @@ new #[Title('Reconciliation Verification')] class extends Component {
         return $this->reconciliation->patient->status === PatientStatus::Active;
     }
 
-    protected function loadCurrentRows(): void
+    public function loadCurrentRows(): void
     {
         $this->currentRows = $this->reconciliation->medicationCurrents()
             ->orderByDesc('id')
@@ -85,6 +102,9 @@ new #[Title('Reconciliation Verification')] class extends Component {
                 'non_adherence_reason' => (string) $item->non_adherence_reason,
                 'source_type' => $item->source_type?->value ?? SourceType::PatientReport->value,
                 'ordered_by' => (string) $item->ordered_by,
+                'safety_check_status' => $item->safety_check_status->value,
+                'safety_flags' => $item->safety_flags,
+                'safety_checked_at' => $item->safety_checked_at,
             ])
             ->all();
     }
@@ -118,49 +138,6 @@ new #[Title('Reconciliation Verification')] class extends Component {
                 'clinical_note' => (string) $d->clinical_note,
             ])
             ->all();
-    }
-
-    /**
-     * Best-effort scanning aid only — reference_range is free text, not structured data,
-     * so this is a heuristic, not a clinically validated flag. Always confirm the actual
-     * reference range before acting on it.
-     */
-    protected function labFlag(LabResult $result): ?string
-    {
-        if (! is_numeric($result->result_value) || blank($result->reference_range)) {
-            return null;
-        }
-
-        $value = (float) $result->result_value;
-        $range = trim($result->reference_range);
-
-        if (preg_match('/^([\d.]+)\s*[-–]\s*([\d.]+)$/u', $range, $matches)) {
-            $low = (float) $matches[1];
-            $high = (float) $matches[2];
-        } elseif (preg_match('/^[<≤]\s*([\d.]+)$/u', $range, $matches)) {
-            $low = null;
-            $high = (float) $matches[1];
-        } elseif (preg_match('/^[>≥]\s*([\d.]+)$/u', $range, $matches)) {
-            $low = (float) $matches[1];
-            $high = null;
-        } else {
-            return null;
-        }
-
-        $span = ($low !== null && $high !== null)
-            ? max($high - $low, 0.0001)
-            : max((float) ($high ?? $low), 0.0001);
-        $margin = $span * 0.1;
-
-        if ($low !== null && $value < $low) {
-            return $value < $low - $margin ? 'abnormal' : 'borderline';
-        }
-
-        if ($high !== null && $value > $high) {
-            return $value > $high + $margin ? 'abnormal' : 'borderline';
-        }
-
-        return 'normal';
     }
 
     public function addCurrentRow(): void
@@ -252,14 +229,17 @@ new #[Title('Reconciliation Verification')] class extends Component {
                 ? trim($data['dose_amount'].' '.($data['dose_unit'] ?? ''))
                 : null;
             $id = $this->currentRows[$index]['id'] ?? null;
+            $medication = $id ? MedicationCurrent::find($id) : null;
 
-            if ($id) {
-                MedicationCurrent::find($id)?->update($data);
+            if ($medication) {
+                $medication->update($data);
+                $this->dispatchSafetyCheckIfNeeded($medication, isNew: false);
             } else {
-                MedicationCurrent::create([
+                $medication = MedicationCurrent::create([
                     ...$data,
                     'reconciliation_id' => $this->reconciliation->id,
                 ]);
+                $this->dispatchSafetyCheckIfNeeded($medication, isNew: true);
             }
         }
 
@@ -267,6 +247,48 @@ new #[Title('Reconciliation Verification')] class extends Component {
         $this->editingRows = [];
 
         Flux::toast('Current medication list saved.', variant: 'success');
+    }
+
+    /**
+     * Fires the safety check the instant a medication is committed — a new row,
+     * or an existing row whose drug/dose/frequency actually changed. Stale flags
+     * are cleared immediately so the box never shows an old "clear"/flagged result
+     * while a fresh check is in flight.
+     */
+    private function dispatchSafetyCheckIfNeeded(MedicationCurrent $medication, bool $isNew): void
+    {
+        if (! $isNew && ! $medication->wasChanged(['medication_name', 'dose_amount', 'dose_unit', 'dose', 'frequency'])) {
+            return;
+        }
+
+        if (! $isNew) {
+            $medication->update([
+                'safety_check_status' => SafetyCheckStatus::Pending,
+                'safety_flags' => null,
+            ]);
+        }
+
+        CheckMedicationSafetyJob::dispatch($medication);
+    }
+
+    public function recheckMedicationSafety(int $medicationId): void
+    {
+        $this->authorize('update', $this->reconciliation);
+
+        $medication = $this->reconciliation->medicationCurrents()->whereKey($medicationId)->first();
+
+        if (! $medication) {
+            return;
+        }
+
+        $medication->update([
+            'safety_check_status' => SafetyCheckStatus::Pending,
+            'safety_flags' => null,
+        ]);
+
+        CheckMedicationSafetyJob::dispatch($medication);
+
+        $this->loadCurrentRows();
     }
 
     public function saveAssessments(): void
@@ -296,27 +318,6 @@ new #[Title('Reconciliation Verification')] class extends Component {
         $this->loadAssessments();
 
         Flux::toast('Assessments saved.', variant: 'success');
-    }
-
-    public function runMedicationSafetyReview(DrugBankMedicationSafetyReviewService $service): void
-    {
-        $this->authorize('pharmacistAssess', $this->reconciliation);
-
-        if (! config('services.drugbank.enabled')) {
-            Flux::toast('Medication safety reviews are currently paused.', variant: 'warning');
-
-            return;
-        }
-
-        // Reviews always use a persisted medication list, never partially typed inputs.
-        $this->saveCurrentMedications();
-
-        try {
-            $service->review($this->reconciliation);
-            Flux::toast('Medication safety review completed. Pharmacist review is still required.', variant: 'success');
-        } catch (\RuntimeException $exception) {
-            Flux::toast($exception->getMessage(), variant: 'danger');
-        }
     }
 
     public function completeVerification(): void
@@ -350,12 +351,11 @@ new #[Title('Reconciliation Verification')] class extends Component {
                 ->where('is_patient_taking', TakingStatus::Yes)
                 ->get(),
             'labResults' => $labResults,
-            'abnormalLabCount' => $labResults->filter(fn (LabResult $r) => in_array($this->labFlag($r), ['abnormal', 'borderline'], true))->count(),
+            'abnormalLabCount' => $labResults->filter(fn (LabResult $r) => in_array($r->flag(), ['abnormal', 'borderline'], true))->count(),
             'unresolvedCount' => $unresolved->count(),
             'worstUnresolvedSeverity' => $unresolved->isEmpty()
                 ? null
                 : $unresolved->sortBy(fn ($a) => $severityRank[$a['severity']] ?? 99)->first()['severity'],
-            'latestSafetyReview' => $this->reconciliation->medicationSafetyReviews()->latest('reviewed_at')->first(),
         ];
     }
 }; ?>
@@ -493,7 +493,7 @@ new #[Title('Reconciliation Verification')] class extends Component {
         @else
             <div class="divide-y divide-zinc-100 dark:divide-zinc-800">
                 @foreach ($labResults as $result)
-                    @php $flag = $this->labFlag($result); @endphp
+                    @php $flag = $result->flag(); @endphp
                     <div class="flex items-center justify-between gap-3 py-2 text-sm" wire:key="lab-{{ $result->id }}">
                         <div class="min-w-0">
                             <div class="truncate font-medium">{{ $result->test_name }}</div>
@@ -517,66 +517,8 @@ new #[Title('Reconciliation Verification')] class extends Component {
         @endif
     </flux:card>
 
-    {{-- Explicitly requested, evidence-based safety review. It never changes medication orders. --}}
-    @if (config('services.drugbank.enabled'))
-    <flux:card class="space-y-4">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-                <flux:heading size="lg">Medication safety advice</flux:heading>
-                <flux:subheading>DrugBank interaction screening. This is decision support only and requires pharmacist review.</flux:subheading>
-            </div>
-            @can('pharmacistAssess', $reconciliation)
-                <flux:button size="sm" variant="primary" wire:click="runMedicationSafetyReview">
-                    Run medication safety review
-                </flux:button>
-            @endcan
-        </div>
-
-        @if (! $latestSafetyReview)
-            <flux:text class="text-sm text-zinc-500">No safety review has been run for this reconciliation.</flux:text>
-        @else
-            <div class="rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-700">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                    <flux:text class="font-medium">Reviewed {{ $latestSafetyReview->reviewed_at?->format('d/m/Y H:i') ?? '—' }}</flux:text>
-                    <flux:badge size="sm" color="zinc">{{ $latestSafetyReview->results['source'] ?? 'Review' }}</flux:badge>
-                </div>
-                <flux:text class="mt-2 text-xs text-zinc-500">{{ $latestSafetyReview->results['scope'] ?? '' }}</flux:text>
-            </div>
-
-            @if (filled($latestSafetyReview->results['alerts'] ?? []))
-                <div class="space-y-3">
-                    @foreach ($latestSafetyReview->results['alerts'] as $alert)
-                        @php
-                            $alertColor = match (strtolower($alert['severity'] ?? '')) {
-                                'major', 'critical' => 'red',
-                                'moderate' => 'amber',
-                                default => 'zinc',
-                            };
-                        @endphp
-                        <div class="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <flux:badge size="sm" :color="$alertColor">{{ str($alert['severity'] ?? 'Unknown')->headline() }}</flux:badge>
-                                @if (filled($alert['evidence_level'] ?? null))
-                                    <flux:badge size="sm" color="zinc">{{ str($alert['evidence_level'])->replace('_', ' ') }}</flux:badge>
-                                @endif
-                            </div>
-                            <flux:text class="mt-2">{{ $alert['finding'] }}</flux:text>
-                            @if (filled($alert['management'] ?? null))
-                                <flux:text class="mt-1 text-sm text-zinc-500">Suggested review: {{ $alert['management'] }}</flux:text>
-                            @endif
-                        </div>
-                    @endforeach
-                </div>
-            @else
-                <flux:callout variant="success" icon="check-circle" heading="No DrugBank interactions returned" text="This result does not replace pharmacist assessment or lab-specific dosing review." />
-            @endif
-
-            @if (filled($latestSafetyReview->results['unmatched_medications'] ?? []))
-                <flux:callout variant="warning" icon="exclamation-triangle" heading="Medication name needs review" :text="'DrugBank could not match: '.implode(', ', $latestSafetyReview->results['unmatched_medications']).'.'" />
-            @endif
-        @endif
-    </flux:card>
-    @endif
+    {{-- AI medication safety check: per-medication, openFDA/RxNorm-backed, runs automatically in the background. --}}
+    <x-medication-safety-check :rows="$currentRows" />
 
     {{-- Working area: the active/editable current list first, the historical BPMH reference second --}}
     <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">

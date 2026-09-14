@@ -35,10 +35,13 @@ return [
         ],
     ],
 
-    'drugbank' => [
-        'key' => env('DRUGBANK_API_KEY'),
-        'region' => env('DRUGBANK_REGION', 'my'),
-        'enabled' => env('MEDICATION_SAFETY_REVIEW_ENABLED', false),
+    'openfda' => [
+        'key' => env('OPENFDA_API_KEY'),
+        'base_url' => env('OPENFDA_BASE_URL', 'https://api.fda.gov'),
+    ],
+
+    'rxnorm' => [
+        'base_url' => env('RXNORM_BASE_URL', 'https://rxnav.nlm.nih.gov/REST'),
     ],
 
 ];
