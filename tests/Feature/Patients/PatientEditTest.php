@@ -25,3 +25,15 @@ test('patient can be updated and risk is recalculated', function () {
     expect($patient->updated_by)->toBe($user->id);
     expect($patient->risk_level)->toBe(RiskLevel::High);
 });
+
+test('editing a patient still offers their own currently-assigned bed', function () {
+    $this->actingAs(User::factory()->create());
+
+    $ward = Ward::factory()->create(['bed_capacity' => 1]);
+    $bed = $ward->beds()->first();
+    $patient = Patient::factory()->create(['ward_id' => $ward->id, 'bed_id' => $bed->id]);
+
+    $component = Livewire::test('pages::patients.edit', ['patient' => $patient]);
+
+    expect($component->viewData('availableBeds')->pluck('id')->all())->toBe([$bed->id]);
+});

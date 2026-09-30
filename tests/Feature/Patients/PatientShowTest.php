@@ -154,3 +154,129 @@ test('see all expands medication history in place instead of navigating away', f
         ->set('showAllMedicationHistory', true)
         ->assertSee('Oldest Medication');
 });
+
+test('lab results widget can be searched by test name', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+
+    LabResult::factory()->create(['patient_id' => $patient->id, 'test_name' => 'Sodium', 'taken_at' => now()]);
+    LabResult::factory()->create(['patient_id' => $patient->id, 'test_name' => 'Potassium', 'taken_at' => now()]);
+
+    Livewire::test('pages::patients.show', ['patient' => $patient])
+        ->set('labResultsSearch', 'Sodium')
+        ->assertSee('Sodium')
+        ->assertDontSee('Potassium');
+});
+
+test('lab results widget can be sorted by test name', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+
+    LabResult::factory()->create(['patient_id' => $patient->id, 'test_name' => 'Sodium', 'taken_at' => now()]);
+    LabResult::factory()->create(['patient_id' => $patient->id, 'test_name' => 'Potassium', 'taken_at' => now()]);
+
+    Livewire::test('pages::patients.show', ['patient' => $patient])
+        ->call('sortLabResults', 'test_name')
+        ->assertSeeInOrder(['Potassium', 'Sodium'])
+        ->call('sortLabResults', 'test_name')
+        ->assertSeeInOrder(['Sodium', 'Potassium']);
+});
+
+test('medication history widget can be searched by medication name', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+
+    MedicationHistory::factory()->create(['patient_id' => $patient->id, 'medication_name' => 'Amlodipine']);
+    MedicationHistory::factory()->create(['patient_id' => $patient->id, 'medication_name' => 'Metformin']);
+
+    Livewire::test('pages::patients.show', ['patient' => $patient])
+        ->set('medicationHistorySearch', 'Amlodipine')
+        ->assertSee('Amlodipine')
+        ->assertDontSee('Metformin');
+});
+
+test('medication history widget can be sorted by medication name', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+
+    MedicationHistory::factory()->create(['patient_id' => $patient->id, 'medication_name' => 'Zolpidem']);
+    MedicationHistory::factory()->create(['patient_id' => $patient->id, 'medication_name' => 'Amlodipine']);
+
+    Livewire::test('pages::patients.show', ['patient' => $patient])
+        ->call('sortMedicationHistory', 'medication_name')
+        ->assertSeeInOrder(['Amlodipine', 'Zolpidem'])
+        ->call('sortMedicationHistory', 'medication_name')
+        ->assertSeeInOrder(['Zolpidem', 'Amlodipine']);
+});
+
+test('lab results widget sort direction can be toggled via the sort by dropdown', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+
+    LabResult::factory()->create(['patient_id' => $patient->id, 'test_name' => 'Sodium', 'taken_at' => now()]);
+    LabResult::factory()->create(['patient_id' => $patient->id, 'test_name' => 'Potassium', 'taken_at' => now()]);
+
+    Livewire::test('pages::patients.show', ['patient' => $patient])
+        ->set('labResultsSortBy', 'test_name')
+        ->assertSet('labResultsSortDirection', 'desc')
+        ->call('toggleLabResultsSortDirection')
+        ->assertSet('labResultsSortDirection', 'asc')
+        ->assertSeeInOrder(['Potassium', 'Sodium'])
+        ->call('toggleLabResultsSortDirection')
+        ->assertSet('labResultsSortDirection', 'desc')
+        ->assertSeeInOrder(['Sodium', 'Potassium']);
+});
+
+test('medication history widget sort direction can be toggled via the sort by dropdown', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+
+    MedicationHistory::factory()->create(['patient_id' => $patient->id, 'medication_name' => 'Zolpidem']);
+    MedicationHistory::factory()->create(['patient_id' => $patient->id, 'medication_name' => 'Amlodipine']);
+
+    Livewire::test('pages::patients.show', ['patient' => $patient])
+        ->set('medicationHistorySortBy', 'medication_name')
+        ->assertSet('medicationHistorySortDirection', 'desc')
+        ->call('toggleMedicationHistorySortDirection')
+        ->assertSet('medicationHistorySortDirection', 'asc')
+        ->assertSeeInOrder(['Amlodipine', 'Zolpidem'])
+        ->call('toggleMedicationHistorySortDirection')
+        ->assertSet('medicationHistorySortDirection', 'desc')
+        ->assertSeeInOrder(['Zolpidem', 'Amlodipine']);
+});
+
+test('lab results widget can be sorted by result value and reference range', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+
+    LabResult::factory()->create(['patient_id' => $patient->id, 'test_name' => 'Sodium', 'result_value' => '9', 'reference_range' => '135-145', 'taken_at' => now()]);
+    LabResult::factory()->create(['patient_id' => $patient->id, 'test_name' => 'Potassium', 'result_value' => '3', 'reference_range' => '120-130', 'taken_at' => now()]);
+
+    Livewire::test('pages::patients.show', ['patient' => $patient])
+        ->call('sortLabResults', 'result_value')
+        ->assertSeeInOrder(['Potassium', 'Sodium'])
+        ->call('sortLabResults', 'reference_range')
+        ->assertSeeInOrder(['Potassium', 'Sodium']);
+});
+
+test('medication history widget can be sorted by dose amount and strength', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+
+    MedicationHistory::factory()->create(['patient_id' => $patient->id, 'medication_name' => 'Zolpidem', 'dose_amount' => 200, 'strength' => '200mg']);
+    MedicationHistory::factory()->create(['patient_id' => $patient->id, 'medication_name' => 'Amlodipine', 'dose_amount' => 100, 'strength' => '100mg']);
+
+    Livewire::test('pages::patients.show', ['patient' => $patient])
+        ->call('sortMedicationHistory', 'dose_amount')
+        ->assertSeeInOrder(['Amlodipine', 'Zolpidem'])
+        ->call('sortMedicationHistory', 'strength')
+        ->assertSeeInOrder(['Amlodipine', 'Zolpidem']);
+});

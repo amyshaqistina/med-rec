@@ -3,15 +3,14 @@
 use App\Enums\PatientStatus;
 use App\Enums\ReconciliationStatus;
 use App\Enums\RiskLevel;
+use App\Models\Patient;
 use App\Models\Ward;
+use Illuminate\Database\Eloquent\Builder;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
 use Livewire\Component;
-use Livewire\WithPagination;
 
 new #[Title('Ward Patients')] class extends Component {
-    use WithPagination;
-
     public Ward $ward;
 
     #[Url]
@@ -28,21 +27,6 @@ new #[Title('Ward Patients')] class extends Component {
     public function mount(Ward $ward): void
     {
         $this->ward = $ward;
-    }
-
-    public function updatedSearch(): void
-    {
-        $this->resetPage();
-    }
-
-    public function updatedRisk(): void
-    {
-        $this->resetPage();
-    }
-
-    public function updatedIncludeDischarged(): void
-    {
-        $this->resetPage();
     }
 
     public function toggleFilters(): void
@@ -65,7 +49,7 @@ new #[Title('Ward Patients')] class extends Component {
     public function exportList(): \Symfony\Component\HttpFoundation\StreamedResponse
     {
         $patients = $this->filteredPatients()
-            ->with(['reconciliations' => fn ($query) => $query->latest()])
+            ->with(['reconciliations' => fn ($query) => $query->latest(), 'bed'])
             ->orderBy('last_name')
             ->get();
 
@@ -85,7 +69,7 @@ new #[Title('Ward Patients')] class extends Component {
                     $patient->admission_date->format('d/m/Y H:i'),
                     $patient->primary_diagnosis,
                     $this->riskLabel($patient->risk_level),
-                    $patient->bed_no,
+                    $patient->bed?->label(),
                     $reconciliationDone ? 'Done' : ($latestReconciliation ? 'Pending' : 'Not started'),
                 ]);
             }
@@ -95,12 +79,27 @@ new #[Title('Ward Patients')] class extends Component {
     }
 
     /**
-     * @return \Illuminate\Database\Eloquent\Relations\HasMany<\App\Models\Patient, \App\Models\Ward>
+     * @return \Illuminate\Database\Eloquent\Relations\HasMany<Patient, Ward>
      */
     protected function filteredPatients(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
-        return $this->ward->patients()
-            ->when(! $this->includeDischarged, fn ($query) => $query->where('status', PatientStatus::Active))
+        $query = $this->ward->patients()
+            ->when(! $this->includeDischarged, fn ($query) => $query->where('status', PatientStatus::Active));
+
+        $this->applySearchAndRiskFilters($query);
+
+        return $query;
+    }
+
+    /**
+     * The `first_name`/`last_name`/`mrn` search and risk-level filter shared by every
+     * patient-scoped query on this page (the bed grid, the discharged rows, and the CSV export).
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<Patient>|\Illuminate\Database\Eloquent\Relations\HasMany<Patient, Ward>  $query
+     */
+    protected function applySearchAndRiskFilters($query): void
+    {
+        $query
             ->when($this->search, function ($query) {
                 $query->where(function ($query) {
                     $query->where('first_name', 'like', "%{$this->search}%")
@@ -120,13 +119,86 @@ new #[Title('Ward Patients')] class extends Component {
         return $this->ward->patients()->where('status', PatientStatus::Active);
     }
 
+    /**
+     * Every bed in the ward (occupied and empty), sorted occupied-first, then by bed number
+     * within each group — search/risk filters hide non-matching occupied beds and every empty
+     * bed, since there's nothing on an empty bed to match against.
+     *
+     * @return \Illuminate\Support\Collection<int, object{bed: \App\Models\Bed, patient: ?Patient}>
+     */
+    protected function bedRows(): \Illuminate\Support\Collection
+    {
+        return $this->ward->beds()
+            ->with(['patient' => fn ($query) => $query->with(['reconciliations' => fn ($query) => $query->latest()])])
+            ->when(filled($this->search) || filled($this->risk), function (Builder $query) {
+                $query->whereHas('patient', function (Builder $query) {
+                    $query->where('status', PatientStatus::Active);
+                    $this->applySearchAndRiskFilters($query);
+                });
+            })
+            ->orderBy('bed_no')
+            ->get()
+            ->map(fn ($bed) => (object) ['bed' => $bed, 'patient' => $bed->patient])
+            ->sortBy(fn ($row) => ($row->patient ? 0 : 100_000) + $row->bed->bed_no)
+            ->values();
+    }
+
+    /**
+     * Active patients in the ward with no bed assigned (bed assignment is optional) — shown
+     * alongside occupied beds rather than with the empty ones, since they're still a current
+     * occupant of the ward.
+     *
+     * @return \Illuminate\Support\Collection<int, object{bed: null, patient: Patient}>
+     */
+    protected function unassignedActiveRows(): \Illuminate\Support\Collection
+    {
+        $query = $this->ward->patients()
+            ->where('status', PatientStatus::Active)
+            ->whereNull('bed_id')
+            ->with(['reconciliations' => fn ($query) => $query->latest()]);
+
+        $this->applySearchAndRiskFilters($query);
+
+        return $query->orderBy('last_name')
+            ->get()
+            ->map(fn ($patient) => (object) ['bed' => null, 'patient' => $patient]);
+    }
+
+    /**
+     * Discharged patients still linked to this ward, shown only via the "include discharged"
+     * toggle — they no longer occupy a bed (freed on discharge), so they can't appear as a
+     * bed row and are appended to the list separately.
+     *
+     * @return \Illuminate\Support\Collection<int, object{bed: null, patient: Patient}>
+     */
+    protected function dischargedRows(): \Illuminate\Support\Collection
+    {
+        if (! $this->includeDischarged) {
+            return collect();
+        }
+
+        $query = $this->ward->patients()
+            ->where('status', PatientStatus::Discharged)
+            ->with(['reconciliations' => fn ($query) => $query->latest()]);
+
+        $this->applySearchAndRiskFilters($query);
+
+        return $query->orderBy('last_name')
+            ->get()
+            ->map(fn ($patient) => (object) ['bed' => null, 'patient' => $patient]);
+    }
+
     public function with(): array
     {
+        $beds = $this->bedRows();
+
+        $rows = $beds->filter(fn ($row) => $row->patient)
+            ->concat($this->unassignedActiveRows())
+            ->concat($beds->reject(fn ($row) => $row->patient))
+            ->concat($this->dischargedRows());
+
         return [
-            'patients' => $this->filteredPatients()
-                ->with(['reconciliations' => fn ($query) => $query->latest()])
-                ->orderBy('last_name')
-                ->paginate(10),
+            'rows' => $rows,
             'patientCount' => $this->activePatients()->count(),
             'stableCount' => $this->activePatients()->where('risk_level', RiskLevel::Low)->count(),
             'moderateCount' => $this->activePatients()->where('risk_level', RiskLevel::Medium)->count(),
@@ -216,7 +288,7 @@ new #[Title('Ward Patients')] class extends Component {
         <div class="text-white/80">{{ $ward->name }} · {{ $patientCount }} patient{{ $patientCount === 1 ? '' : 's' }}</div>
     </div>
 
-    <flux:table :paginate="$patients">
+    <flux:table>
         <flux:table.columns>
             <flux:table.column>Patient Info</flux:table.column>
             <flux:table.column>Gender</flux:table.column>
@@ -225,51 +297,77 @@ new #[Title('Ward Patients')] class extends Component {
             <flux:table.column>Diagnosis</flux:table.column>
             <flux:table.column>Status</flux:table.column>
             <flux:table.column>Bed No.</flux:table.column>
+            <flux:table.column>Bed Status</flux:table.column>
             <flux:table.column>Reconciliation</flux:table.column>
             <flux:table.column align="end">Actions</flux:table.column>
         </flux:table.columns>
 
         <flux:table.rows>
-            @forelse ($patients as $patient)
+            @forelse ($rows as $row)
                 @php
-                    $latestReconciliation = $patient->reconciliations->first();
+                    $patient = $row->patient;
+                    $bed = $row->bed;
+                    $latestReconciliation = $patient?->reconciliations->first();
                     $reconciliationDone = $latestReconciliation && in_array($latestReconciliation->status, [\App\Enums\ReconciliationStatus::Completed, \App\Enums\ReconciliationStatus::Closed], true);
+                    $bedStatus = match (true) {
+                        ! $patient => 'Empty',
+                        $patient->status === \App\Enums\PatientStatus::Discharged => 'Discharged',
+                        default => 'Occupied',
+                    };
                 @endphp
-                <flux:table.row :key="$patient->id">
-                    <flux:table.cell variant="strong">
-                        <a href="{{ route('patients.show', $patient) }}" wire:navigate class="flex items-center gap-3 hover:underline">
-                            <span class="flex size-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                                <flux:icon.user class="size-4" />
-                            </span>
-                            <span>
-                                <span class="block">{{ $patient->full_name }}</span>
-                                <span class="block text-xs font-normal text-zinc-500">MRN: {{ $patient->mrn }}</span>
-                            </span>
-                        </a>
-                    </flux:table.cell>
-                    <flux:table.cell>{{ $patient->gender?->value ?? '—' }}</flux:table.cell>
-                    <flux:table.cell>{{ $patient->age }}</flux:table.cell>
-                    <flux:table.cell>
-                        <span class="block">{{ $patient->admission_date->format('d M Y') }}</span>
-                        <span class="block text-xs text-zinc-500">{{ $patient->admission_date->format('h:i A') }}</span>
-                    </flux:table.cell>
-                    <flux:table.cell>{{ $patient->primary_diagnosis ?? '—' }}</flux:table.cell>
-                    <flux:table.cell>
-                        <flux:badge size="sm" :color="$patient->risk_level->color()">{{ $this->riskLabel($patient->risk_level) }}</flux:badge>
-                    </flux:table.cell>
-                    <flux:table.cell>{{ $patient->bed_no ?? '—' }}</flux:table.cell>
-                    <flux:table.cell>
-                        <flux:badge size="sm" :color="$reconciliationDone ? 'emerald' : ($latestReconciliation ? 'amber' : 'zinc')">
-                            {{ $reconciliationDone ? 'Done' : ($latestReconciliation ? 'Pending' : 'Not started') }}
-                        </flux:badge>
-                    </flux:table.cell>
-                    <flux:table.cell align="end">
-                        <flux:button :href="route('patients.show', $patient)" wire:navigate variant="filled" size="sm" icon="pencil-square" />
-                    </flux:table.cell>
+                <flux:table.row :key="$bed ? 'bed-'.$bed->id : 'patient-'.$patient->id">
+                    @if ($patient)
+                        <flux:table.cell variant="strong">
+                            <a href="{{ route('patients.show', $patient) }}" wire:navigate class="flex items-center gap-3 hover:underline">
+                                <span class="flex size-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                                    <flux:icon.user class="size-4" />
+                                </span>
+                                <span>
+                                    <span class="block">{{ $patient->full_name }}</span>
+                                    <span class="block text-xs font-normal text-zinc-500">MRN: {{ $patient->mrn }}</span>
+                                </span>
+                            </a>
+                        </flux:table.cell>
+                        <flux:table.cell>{{ $patient->gender?->value ?? '—' }}</flux:table.cell>
+                        <flux:table.cell>{{ $patient->age }}</flux:table.cell>
+                        <flux:table.cell>
+                            <span class="block">{{ $patient->admission_date->format('d M Y') }}</span>
+                            <span class="block text-xs text-zinc-500">{{ $patient->admission_date->format('h:i A') }}</span>
+                        </flux:table.cell>
+                        <flux:table.cell>{{ $patient->primary_diagnosis ?? '—' }}</flux:table.cell>
+                        <flux:table.cell>
+                            <flux:badge size="sm" :color="$patient->risk_level->color()">{{ $this->riskLabel($patient->risk_level) }}</flux:badge>
+                        </flux:table.cell>
+                        <flux:table.cell>{{ $bed?->label() ?? '—' }}</flux:table.cell>
+                        <flux:table.cell>
+                            <flux:badge size="sm" :color="$bedStatus === 'Occupied' ? 'emerald' : 'zinc'">{{ $bedStatus }}</flux:badge>
+                        </flux:table.cell>
+                        <flux:table.cell>
+                            <flux:badge size="sm" :color="$reconciliationDone ? 'emerald' : ($latestReconciliation ? 'amber' : 'zinc')">
+                                {{ $reconciliationDone ? 'Done' : ($latestReconciliation ? 'Pending' : 'Not started') }}
+                            </flux:badge>
+                        </flux:table.cell>
+                        <flux:table.cell align="end">
+                            <flux:button :href="route('patients.show', $patient)" wire:navigate variant="filled" size="sm" icon="pencil-square" />
+                        </flux:table.cell>
+                    @else
+                        <flux:table.cell variant="strong" class="text-zinc-400">—</flux:table.cell>
+                        <flux:table.cell class="text-zinc-400">—</flux:table.cell>
+                        <flux:table.cell class="text-zinc-400">—</flux:table.cell>
+                        <flux:table.cell class="text-zinc-400">—</flux:table.cell>
+                        <flux:table.cell class="text-zinc-400">—</flux:table.cell>
+                        <flux:table.cell class="text-zinc-400">—</flux:table.cell>
+                        <flux:table.cell>{{ $bed->label() }}</flux:table.cell>
+                        <flux:table.cell>
+                            <flux:badge size="sm" color="zinc">{{ $bedStatus }}</flux:badge>
+                        </flux:table.cell>
+                        <flux:table.cell class="text-zinc-400">—</flux:table.cell>
+                        <flux:table.cell align="end" class="text-zinc-400">—</flux:table.cell>
+                    @endif
                 </flux:table.row>
             @empty
                 <flux:table.row>
-                    <flux:table.cell colspan="9" class="text-center text-zinc-500">
+                    <flux:table.cell colspan="10" class="text-center text-zinc-500">
                         No patients currently assigned to this ward.
                     </flux:table.cell>
                 </flux:table.row>

@@ -109,6 +109,9 @@ new #[Title('Ward Dashboard')] class extends Component {
                     <div>
                         <div class="flex items-center gap-2">
                             <flux:heading size="lg">{{ $ward->name }}</flux:heading>
+                            <flux:badge size="sm" color="zinc">
+                                {{ $ward->bed_capacity }} {{ Str::plural('bed', $ward->bed_capacity) }}
+                            </flux:badge>
                             @if ($needsReconciliation)
                                 <flux:badge size="sm" color="red">
                                     {{ $ward->unreconciled_patients_count }} pending

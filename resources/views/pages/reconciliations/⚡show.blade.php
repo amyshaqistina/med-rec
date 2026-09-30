@@ -37,6 +37,28 @@ new #[Title('Reconciliation Verification')] class extends Component {
 
     public bool $showResolvedDiscrepancies = false;
 
+    /**
+     * Number of BPMH reference entries shown before "See all" is expanded.
+     */
+    public const BPMH_PREVIEW_LIMIT = 5;
+
+    /**
+     * Sortable BPMH columns => their label in the sort dropdown.
+     *
+     * @var array<string, string>
+     */
+    public const BPMH_SORT_OPTIONS = [
+        'created_at' => 'Date',
+        'medication_name' => 'Medication',
+        'frequency' => 'Frequency',
+    ];
+
+    public string $bpmhSortBy = 'created_at';
+
+    public string $bpmhSortDirection = 'desc';
+
+    public bool $showAllBpmh = false;
+
     public function mount(Reconciliation $reconciliation): void
     {
         $this->authorize('view', $reconciliation);
@@ -335,9 +357,38 @@ new #[Title('Reconciliation Verification')] class extends Component {
         $this->redirect(route('patients.show', $this->reconciliation->patient_id), navigate: true);
     }
 
+    public function toggleBpmhSortDirection(): void
+    {
+        $this->bpmhSortDirection = $this->bpmhSortDirection === 'asc' ? 'desc' : 'asc';
+    }
+
+    public function toggleShowAllBpmh(): void
+    {
+        $this->showAllBpmh = ! $this->showAllBpmh;
+    }
+
+    /**
+     * The patient's active BPMH entries in the chosen order (newest first by default),
+     * with id as a tie-breaker so entries recorded at the same moment stay stable.
+     *
+     * @return \Illuminate\Database\Eloquent\Collection<int, \App\Models\MedicationHistory>
+     */
+    protected function sortedBpmhList(): \Illuminate\Database\Eloquent\Collection
+    {
+        $column = array_key_exists($this->bpmhSortBy, self::BPMH_SORT_OPTIONS) ? $this->bpmhSortBy : 'created_at';
+        $direction = $this->bpmhSortDirection === 'asc' ? 'asc' : 'desc';
+
+        return $this->reconciliation->patient->medicationHistories()
+            ->where('is_patient_taking', TakingStatus::Yes)
+            ->orderBy($column, $direction)
+            ->orderBy('id', $direction)
+            ->get();
+    }
+
     public function with(): array
     {
         $patient = $this->reconciliation->patient;
+        $bpmhList = $this->sortedBpmhList();
 
         $labResults = $patient->labResults()->latest('taken_at')->limit(8)->get();
 
@@ -347,9 +398,8 @@ new #[Title('Reconciliation Verification')] class extends Component {
 
         return [
             'patient' => $patient,
-            'bpmhList' => $patient->medicationHistories()
-                ->where('is_patient_taking', TakingStatus::Yes)
-                ->get(),
+            'bpmhList' => $this->showAllBpmh ? $bpmhList : $bpmhList->take(self::BPMH_PREVIEW_LIMIT),
+            'bpmhTotal' => $bpmhList->count(),
             'labResults' => $labResults,
             'abnormalLabCount' => $labResults->filter(fn (LabResult $r) => in_array($r->flag(), ['abnormal', 'borderline'], true))->count(),
             'unresolvedCount' => $unresolved->count(),
@@ -641,6 +691,24 @@ new #[Title('Reconciliation Verification')] class extends Component {
         <flux:card class="space-y-3 bg-zinc-50 dark:bg-zinc-800/40">
             <flux:heading size="lg" class="text-zinc-600 dark:text-zinc-400">BPMH (reference)</flux:heading>
 
+            @if ($bpmhTotal > 1)
+                <div class="flex items-center gap-2">
+                    <flux:select wire:model.live="bpmhSortBy" size="sm">
+                        @foreach ($this::BPMH_SORT_OPTIONS as $column => $label)
+                            <option value="{{ $column }}">Sort: {{ $label }}</option>
+                        @endforeach
+                    </flux:select>
+                    <flux:button
+                        size="sm"
+                        variant="ghost"
+                        :icon="$bpmhSortDirection === 'asc' ? 'bars-arrow-up' : 'bars-arrow-down'"
+                        wire:click="toggleBpmhSortDirection"
+                        :tooltip="$bpmhSortDirection === 'asc' ? 'Ascending' : 'Descending'"
+                        aria-label="Toggle BPMH sort direction"
+                    />
+                </div>
+            @endif
+
             @if ($bpmhList->isEmpty())
                 <flux:text class="text-sm text-zinc-500">No active medications recorded in BPMH.</flux:text>
             @else
@@ -651,9 +719,18 @@ new #[Title('Reconciliation Verification')] class extends Component {
                             <div class="text-zinc-500">
                                 {{ $item->dose_amount }} {{ $item->dose_unit }} · {{ $item->route?->value }} · {{ $item->frequency }}
                             </div>
+                            <div class="text-zinc-500">
+                                Taking: {{ $item->is_patient_taking->value }} · {{ $item->created_at->format('d/m/Y') }}
+                            </div>
                         </li>
                     @endforeach
                 </ul>
+
+                @if ($bpmhTotal > $this::BPMH_PREVIEW_LIMIT)
+                    <flux:button size="sm" variant="subtle" class="w-full" wire:click="toggleShowAllBpmh">
+                        {{ $showAllBpmh ? 'Show less' : "See all ({$bpmhTotal})" }}
+                    </flux:button>
+                @endif
             @endif
         </flux:card>
     </div>

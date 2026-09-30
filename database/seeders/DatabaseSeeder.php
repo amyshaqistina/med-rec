@@ -107,12 +107,11 @@ class DatabaseSeeder extends Seeder
         ];
 
         foreach ($wards as $ward) {
-            preg_match('/\d+/', $ward->name, $wardNumberMatch);
-            $wardNumber = $wardNumberMatch[0] ?? $ward->id;
+            $beds = $ward->beds()->orderBy('bed_no')->get();
 
             Patient::factory()
                 ->count(10)
-                ->sequence(fn ($sequence) => ['bed_no' => sprintf('%s-%02d', $wardNumber, $sequence->index + 1)])
+                ->sequence(fn ($sequence) => ['bed_id' => $beds[$sequence->index]->id])
                 ->create([
                     'ward_id' => $ward->id,
                     'created_by' => $technician->id,
@@ -155,7 +154,7 @@ class DatabaseSeeder extends Seeder
             'email' => 'ahmad.bin.ali@example.com',
             'admission_date' => now()->subDay(),
             'ward_id' => $ward?->id,
-            'bed_no' => '6-11',
+            'bed_id' => $ward?->beds()->where('bed_no', 11)->first()?->id,
             'primary_diagnosis' => 'Hypertension with acute kidney injury',
             'allergies' => 'Penicillin (anaphylaxis), NSAIDs (rash)',
             'renal_function' => RenalFunction::MildImpairment,

@@ -2,7 +2,10 @@
 
 namespace App\Models;
 
+use App\Observers\WardObserver;
+use Database\Factories\WardFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -14,10 +17,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property int $bed_capacity
  * @property string $color
  */
+#[ObservedBy(WardObserver::class)]
 #[Fillable(['name', 'department', 'bed_capacity', 'color'])]
 class Ward extends Model
 {
-    /** @use HasFactory<\Database\Factories\WardFactory> */
+    /** @use HasFactory<WardFactory> */
     use HasFactory;
 
     protected function casts(): array
@@ -33,6 +37,14 @@ class Ward extends Model
     public function patients(): HasMany
     {
         return $this->hasMany(Patient::class);
+    }
+
+    /**
+     * @return HasMany<Bed, $this>
+     */
+    public function beds(): HasMany
+    {
+        return $this->hasMany(Bed::class);
     }
 
     /**

@@ -37,7 +37,7 @@ use Illuminate\Support\Facades\DB;
  * @property Carbon $admission_date
  * @property Carbon|null $discharge_date
  * @property int|null $ward_id
- * @property string|null $bed_no
+ * @property int|null $bed_id
  * @property string|null $primary_diagnosis
  * @property string|null $allergies
  * @property string|null $known_adrs
@@ -56,7 +56,7 @@ use Illuminate\Support\Facades\DB;
     'first_name', 'last_name', 'date_of_birth', 'gender',
     'contact_primary', 'contact_secondary', 'email',
     'address_street', 'address_city', 'address_postcode', 'address_state',
-    'admission_date', 'discharge_date', 'ward_id', 'bed_no', 'primary_diagnosis',
+    'admission_date', 'discharge_date', 'ward_id', 'bed_id', 'primary_diagnosis',
     'allergies', 'known_adrs', 'renal_function', 'egfr', 'hepatic_function',
     'pregnancy_status', 'notes', 'status', 'created_by', 'updated_by',
 ])]
@@ -132,6 +132,14 @@ class Patient extends Model
     public function ward(): BelongsTo
     {
         return $this->belongsTo(Ward::class);
+    }
+
+    /**
+     * @return BelongsTo<Bed, $this>
+     */
+    public function bed(): BelongsTo
+    {
+        return $this->belongsTo(Bed::class);
     }
 
     /**

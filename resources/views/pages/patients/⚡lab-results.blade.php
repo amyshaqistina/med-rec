@@ -20,6 +20,12 @@ new #[Title('Lab Results')] class extends Component {
     #[Url]
     public string $dateTo = '';
 
+    #[Url]
+    public string $sortBy = 'taken_at';
+
+    #[Url]
+    public string $sortDirection = 'desc';
+
     public function mount(Patient $patient): void
     {
         $this->authorize('view', $patient);
@@ -42,6 +48,29 @@ new #[Title('Lab Results')] class extends Component {
         $this->resetPage();
     }
 
+    public function updatedSortBy(): void
+    {
+        $this->resetPage();
+    }
+
+    public function toggleSortDirection(): void
+    {
+        $this->sortDirection = $this->sortDirection === 'asc' ? 'desc' : 'asc';
+        $this->resetPage();
+    }
+
+    public function sort(string $column): void
+    {
+        if ($this->sortBy === $column) {
+            $this->sortDirection = $this->sortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            $this->sortBy = $column;
+            $this->sortDirection = 'asc';
+        }
+
+        $this->resetPage();
+    }
+
     public function with(): array
     {
         return [
@@ -49,7 +78,7 @@ new #[Title('Lab Results')] class extends Component {
                 ->when($this->search, fn ($query) => $query->where('test_name', 'like', "%{$this->search}%"))
                 ->when($this->dateFrom, fn ($query) => $query->whereDate('taken_at', '>=', $this->dateFrom))
                 ->when($this->dateTo, fn ($query) => $query->whereDate('taken_at', '<=', $this->dateTo))
-                ->latest('taken_at')
+                ->orderBy($this->sortBy, $this->sortDirection)
                 ->paginate(15),
         ];
     }
@@ -70,14 +99,31 @@ new #[Title('Lab Results')] class extends Component {
         <flux:input wire:model.live.debounce.300ms="search" placeholder="Search by test name…" icon="magnifying-glass" class="sm:max-w-xs" />
         <flux:input type="date" wire:model.live="dateFrom" placeholder="From" class="sm:max-w-xs" />
         <flux:input type="date" wire:model.live="dateTo" placeholder="To" class="sm:max-w-xs" />
+
+        <div class="flex items-center gap-2">
+            <flux:select wire:model.live="sortBy" class="sm:max-w-40">
+                <option value="test_name">Sort: Test</option>
+                <option value="result_value">Sort: Result</option>
+                <option value="reference_range">Sort: Reference range</option>
+                <option value="taken_at">Sort: Taken</option>
+            </flux:select>
+            <flux:button
+                size="sm"
+                variant="ghost"
+                :icon="$sortDirection === 'asc' ? 'bars-arrow-up' : 'bars-arrow-down'"
+                wire:click="toggleSortDirection"
+                :tooltip="$sortDirection === 'asc' ? 'Ascending' : 'Descending'"
+                aria-label="Toggle sort direction"
+            />
+        </div>
     </div>
 
     <flux:table :paginate="$labResults">
         <flux:table.columns>
-            <flux:table.column>Test</flux:table.column>
-            <flux:table.column>Result</flux:table.column>
-            <flux:table.column>Reference range</flux:table.column>
-            <flux:table.column>Taken</flux:table.column>
+            <flux:table.column sortable :sorted="$sortBy === 'test_name'" :direction="$sortDirection" wire:click="sort('test_name')">Test</flux:table.column>
+            <flux:table.column sortable :sorted="$sortBy === 'result_value'" :direction="$sortDirection" wire:click="sort('result_value')">Result</flux:table.column>
+            <flux:table.column sortable :sorted="$sortBy === 'reference_range'" :direction="$sortDirection" wire:click="sort('reference_range')">Reference range</flux:table.column>
+            <flux:table.column sortable :sorted="$sortBy === 'taken_at'" :direction="$sortDirection" wire:click="sort('taken_at')">Taken</flux:table.column>
         </flux:table.columns>
 
         <flux:table.rows>

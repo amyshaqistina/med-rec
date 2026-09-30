@@ -17,6 +17,18 @@ new #[Title('Patient Details')] class extends Component {
 
     public bool $showAllMedicationHistory = false;
 
+    public string $labResultsSearch = '';
+
+    public string $labResultsSortBy = 'taken_at';
+
+    public string $labResultsSortDirection = 'desc';
+
+    public string $medicationHistorySearch = '';
+
+    public string $medicationHistorySortBy = 'created_at';
+
+    public string $medicationHistorySortDirection = 'desc';
+
     public function mount(Patient $patient): void
     {
         $this->authorize('view', $patient);
@@ -54,17 +66,51 @@ new #[Title('Patient Details')] class extends Component {
         $this->redirect(route('reconciliations.show', $reconciliation), navigate: true);
     }
 
+    public function sortLabResults(string $column): void
+    {
+        if ($this->labResultsSortBy === $column) {
+            $this->labResultsSortDirection = $this->labResultsSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            $this->labResultsSortBy = $column;
+            $this->labResultsSortDirection = 'asc';
+        }
+    }
+
+    public function toggleLabResultsSortDirection(): void
+    {
+        $this->labResultsSortDirection = $this->labResultsSortDirection === 'asc' ? 'desc' : 'asc';
+    }
+
+    public function sortMedicationHistory(string $column): void
+    {
+        if ($this->medicationHistorySortBy === $column) {
+            $this->medicationHistorySortDirection = $this->medicationHistorySortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            $this->medicationHistorySortBy = $column;
+            $this->medicationHistorySortDirection = 'asc';
+        }
+    }
+
+    public function toggleMedicationHistorySortDirection(): void
+    {
+        $this->medicationHistorySortDirection = $this->medicationHistorySortDirection === 'asc' ? 'desc' : 'asc';
+    }
+
     public function with(): array
     {
         $latestLabDate = $this->patient->labResults()->max('taken_at');
 
-        $labResults = $this->showAllLabResults
-            ? $this->patient->labResults()->orderByDesc('taken_at')->orderBy('test_name')->get()
-            : ($latestLabDate
-                ? $this->patient->labResults()->where('taken_at', $latestLabDate)->orderBy('test_name')->get()
-                : collect());
+        $labResults = ($this->showAllLabResults || $latestLabDate)
+            ? $this->patient->labResults()
+                ->when(! $this->showAllLabResults, fn ($query) => $query->where('taken_at', $latestLabDate))
+                ->when($this->labResultsSearch, fn ($query) => $query->where('test_name', 'like', "%{$this->labResultsSearch}%"))
+                ->orderBy($this->labResultsSortBy, $this->labResultsSortDirection)
+                ->get()
+            : collect();
 
-        $medicationHistoriesQuery = $this->patient->medicationHistories()->latest();
+        $medicationHistoriesQuery = $this->patient->medicationHistories()
+            ->when($this->medicationHistorySearch, fn ($query) => $query->where('medication_name', 'like', "%{$this->medicationHistorySearch}%"))
+            ->orderBy($this->medicationHistorySortBy, $this->medicationHistorySortDirection);
 
         return [
             'medicationHistories' => $this->showAllMedicationHistory
@@ -169,15 +215,38 @@ new #[Title('Patient Details')] class extends Component {
             @endif
         </div>
 
+        @if ($labResults->isNotEmpty() || $labResultsSearch || $latestLabDate)
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <flux:input wire:model.live.debounce.300ms="labResultsSearch" placeholder="Search by test name…" icon="magnifying-glass" size="sm" class="sm:max-w-xs" />
+
+                <div class="flex items-center gap-2">
+                    <flux:select wire:model.live="labResultsSortBy" size="sm" class="sm:max-w-40">
+                        <option value="test_name">Sort: Test</option>
+                        <option value="result_value">Sort: Result</option>
+                        <option value="reference_range">Sort: Reference range</option>
+                        <option value="taken_at">Sort: Date</option>
+                    </flux:select>
+                    <flux:button
+                        size="sm"
+                        variant="ghost"
+                        :icon="$labResultsSortDirection === 'asc' ? 'bars-arrow-up' : 'bars-arrow-down'"
+                        wire:click="toggleLabResultsSortDirection"
+                        :tooltip="$labResultsSortDirection === 'asc' ? 'Ascending' : 'Descending'"
+                        aria-label="Toggle sort direction"
+                    />
+                </div>
+            </div>
+        @endif
+
         @if ($labResults->isEmpty())
             <flux:text class="text-sm text-zinc-500">No lab results recorded yet.</flux:text>
         @else
             <flux:table>
                 <flux:table.columns>
-                    <flux:table.column>Test</flux:table.column>
-                    <flux:table.column>Result</flux:table.column>
-                    <flux:table.column>Reference range</flux:table.column>
-                    <flux:table.column>Date</flux:table.column>
+                    <flux:table.column sortable :sorted="$labResultsSortBy === 'test_name'" :direction="$labResultsSortDirection" wire:click="sortLabResults('test_name')">Test</flux:table.column>
+                    <flux:table.column sortable :sorted="$labResultsSortBy === 'result_value'" :direction="$labResultsSortDirection" wire:click="sortLabResults('result_value')">Result</flux:table.column>
+                    <flux:table.column sortable :sorted="$labResultsSortBy === 'reference_range'" :direction="$labResultsSortDirection" wire:click="sortLabResults('reference_range')">Reference range</flux:table.column>
+                    <flux:table.column sortable :sorted="$labResultsSortBy === 'taken_at'" :direction="$labResultsSortDirection" wire:click="sortLabResults('taken_at')">Date</flux:table.column>
                 </flux:table.columns>
                 <flux:table.rows>
                     @foreach ($labResults as $result)
@@ -215,16 +284,41 @@ new #[Title('Patient Details')] class extends Component {
             </div>
         </div>
 
+        @if ($medicationHistories->isNotEmpty() || $medicationHistorySearch || $medicationHistoryTotal)
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <flux:input wire:model.live.debounce.300ms="medicationHistorySearch" placeholder="Search by medication name…" icon="magnifying-glass" size="sm" class="sm:max-w-xs" />
+
+                <div class="flex items-center gap-2">
+                    <flux:select wire:model.live="medicationHistorySortBy" size="sm" class="sm:max-w-40">
+                        <option value="medication_name">Sort: Medication</option>
+                        <option value="strength">Sort: Strength</option>
+                        <option value="dose_amount">Sort: Dose</option>
+                        <option value="frequency">Sort: Frequency</option>
+                        <option value="is_patient_taking">Sort: Taking?</option>
+                        <option value="created_at">Sort: Date</option>
+                    </flux:select>
+                    <flux:button
+                        size="sm"
+                        variant="ghost"
+                        :icon="$medicationHistorySortDirection === 'asc' ? 'bars-arrow-up' : 'bars-arrow-down'"
+                        wire:click="toggleMedicationHistorySortDirection"
+                        :tooltip="$medicationHistorySortDirection === 'asc' ? 'Ascending' : 'Descending'"
+                        aria-label="Toggle sort direction"
+                    />
+                </div>
+            </div>
+        @endif
+
         @if ($medicationHistories->isEmpty())
             <flux:text class="text-sm text-zinc-500">No medication history recorded yet.</flux:text>
         @else
             <flux:table>
                 <flux:table.columns>
-                    <flux:table.column>Medication</flux:table.column>
-                    <flux:table.column>Dose</flux:table.column>
-                    <flux:table.column>Frequency</flux:table.column>
-                    <flux:table.column>Taking?</flux:table.column>
-                    <flux:table.column>Date</flux:table.column>
+                    <flux:table.column sortable :sorted="$medicationHistorySortBy === 'medication_name'" :direction="$medicationHistorySortDirection" wire:click="sortMedicationHistory('medication_name')">Medication</flux:table.column>
+                    <flux:table.column sortable :sorted="$medicationHistorySortBy === 'dose_amount'" :direction="$medicationHistorySortDirection" wire:click="sortMedicationHistory('dose_amount')">Dose</flux:table.column>
+                    <flux:table.column sortable :sorted="$medicationHistorySortBy === 'frequency'" :direction="$medicationHistorySortDirection" wire:click="sortMedicationHistory('frequency')">Frequency</flux:table.column>
+                    <flux:table.column sortable :sorted="$medicationHistorySortBy === 'is_patient_taking'" :direction="$medicationHistorySortDirection" wire:click="sortMedicationHistory('is_patient_taking')">Taking?</flux:table.column>
+                    <flux:table.column sortable :sorted="$medicationHistorySortBy === 'created_at'" :direction="$medicationHistorySortDirection" wire:click="sortMedicationHistory('created_at')">Date</flux:table.column>
                     <flux:table.column align="end">Actions</flux:table.column>
                 </flux:table.columns>
                 <flux:table.rows>

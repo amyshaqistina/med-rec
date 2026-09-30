@@ -31,6 +31,72 @@ test('bpmh and current medications are both displayed', function () {
         ->assertSee('Clopidogrel');
 });
 
+test('bpmh reference list shows taking status and recorded date', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+    $reconciliation = Reconciliation::factory()->create(['patient_id' => $patient->id]);
+    $medicationHistory = MedicationHistory::factory()->create([
+        'patient_id' => $patient->id,
+        'medication_name' => 'Amlodipine',
+        'is_patient_taking' => TakingStatus::Yes,
+        'created_at' => now()->subDays(3),
+    ]);
+
+    $this->get(route('reconciliations.show', $reconciliation))
+        ->assertOk()
+        ->assertSee('Taking: Yes')
+        ->assertSee($medicationHistory->created_at->format('d/m/Y'));
+});
+
+test('bpmh reference list shows the latest medication first and can be re-sorted', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+    $reconciliation = Reconciliation::factory()->create(['patient_id' => $patient->id]);
+    MedicationHistory::factory()->create(['patient_id' => $patient->id, 'medication_name' => 'Paracetamol', 'is_patient_taking' => TakingStatus::Yes, 'created_at' => now()->subDays(60)]);
+    MedicationHistory::factory()->create(['patient_id' => $patient->id, 'medication_name' => 'Vitamin D3', 'is_patient_taking' => TakingStatus::Yes, 'created_at' => now()]);
+    MedicationHistory::factory()->create(['patient_id' => $patient->id, 'medication_name' => 'Atorvastatin', 'is_patient_taking' => TakingStatus::Yes, 'created_at' => now()->subDays(30)]);
+
+    $component = Livewire::test('pages::reconciliations.show', ['reconciliation' => $reconciliation]);
+
+    expect($component->viewData('bpmhList')->pluck('medication_name')->all())->toBe(['Vitamin D3', 'Atorvastatin', 'Paracetamol']);
+
+    $component->call('toggleBpmhSortDirection');
+    expect($component->viewData('bpmhList')->pluck('medication_name')->all())->toBe(['Paracetamol', 'Atorvastatin', 'Vitamin D3']);
+
+    $component->set('bpmhSortBy', 'medication_name');
+    expect($component->viewData('bpmhList')->pluck('medication_name')->all())->toBe(['Atorvastatin', 'Paracetamol', 'Vitamin D3']);
+});
+
+test('bpmh reference list ignores unknown sort columns', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+    $reconciliation = Reconciliation::factory()->create(['patient_id' => $patient->id]);
+    MedicationHistory::factory()->create(['patient_id' => $patient->id, 'is_patient_taking' => TakingStatus::Yes]);
+
+    Livewire::test('pages::reconciliations.show', ['reconciliation' => $reconciliation])
+        ->set('bpmhSortBy', 'id; drop table patients')
+        ->assertOk();
+});
+
+test('bpmh reference list shows a preview with a see all toggle', function () {
+    $this->actingAs(User::factory()->create());
+
+    $patient = Patient::factory()->create();
+    $reconciliation = Reconciliation::factory()->create(['patient_id' => $patient->id]);
+    MedicationHistory::factory()->count(7)->create(['patient_id' => $patient->id, 'is_patient_taking' => TakingStatus::Yes]);
+
+    $component = Livewire::test('pages::reconciliations.show', ['reconciliation' => $reconciliation])
+        ->assertSee('See all (7)');
+
+    expect($component->viewData('bpmhList'))->toHaveCount(5);
+
+    $component->call('toggleShowAllBpmh')->assertSee('Show less');
+    expect($component->viewData('bpmhList'))->toHaveCount(7);
+});
+
 test('running the discrepancy check surfaces an omission', function () {
     $this->actingAs(User::factory()->create());
 

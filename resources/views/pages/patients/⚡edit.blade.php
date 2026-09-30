@@ -4,6 +4,7 @@ use App\Enums\Gender;
 use App\Enums\HepaticFunction;
 use App\Enums\PregnancyStatus;
 use App\Enums\RenalFunction;
+use App\Models\Bed;
 use App\Models\Patient;
 use App\Models\Ward;
 use Illuminate\Validation\Rule;
@@ -37,7 +38,7 @@ new #[Title('Edit Patient')] class extends Component {
 
     public string $ward_id = '';
 
-    public string $bed_no = '';
+    public string $bed_id = '';
 
     public string $primary_diagnosis = '';
 
@@ -73,7 +74,7 @@ new #[Title('Edit Patient')] class extends Component {
         $this->address_postcode = (string) $patient->address_postcode;
         $this->address_state = (string) $patient->address_state;
         $this->ward_id = $patient->ward_id !== null ? (string) $patient->ward_id : '';
-        $this->bed_no = (string) $patient->bed_no;
+        $this->bed_id = $patient->bed_id !== null ? (string) $patient->bed_id : '';
         $this->primary_diagnosis = (string) $patient->primary_diagnosis;
         $this->allergies = (string) $patient->allergies;
         $this->known_adrs = (string) $patient->known_adrs;
@@ -82,6 +83,11 @@ new #[Title('Edit Patient')] class extends Component {
         $this->hepatic_function = $patient->hepatic_function->value;
         $this->pregnancy_status = $patient->pregnancy_status->value;
         $this->notes = (string) $patient->notes;
+    }
+
+    public function updatedWardId(): void
+    {
+        $this->bed_id = '';
     }
 
     public function save(): void
@@ -101,7 +107,7 @@ new #[Title('Edit Patient')] class extends Component {
             'address_postcode' => ['nullable', 'string', 'max:10'],
             'address_state' => ['nullable', 'string', 'max:50'],
             'ward_id' => ['nullable', 'integer', 'exists:wards,id'],
-            'bed_no' => ['nullable', 'string', 'max:20'],
+            'bed_id' => ['nullable', 'integer', Rule::exists('beds', 'id')->where('ward_id', $this->ward_id)],
             'primary_diagnosis' => ['nullable', 'string', 'max:255'],
             'allergies' => ['nullable', 'string'],
             'known_adrs' => ['nullable', 'string'],
@@ -129,6 +135,10 @@ new #[Title('Edit Patient')] class extends Component {
     {
         return [
             'wards' => Ward::orderBy('name')->get(),
+            'availableBeds' => Bed::where('ward_id', $this->ward_id)
+                ->where(fn ($query) => $query->whereDoesntHave('patient')->orWhere('id', $this->bed_id))
+                ->orderBy('bed_no')
+                ->get(),
         ];
     }
 }; ?>
@@ -173,12 +183,16 @@ new #[Title('Edit Patient')] class extends Component {
             <flux:legend>Admission</flux:legend>
 
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <flux:select wire:model="ward_id" label="Ward" placeholder="Select ward…">
+                <flux:select wire:model.live="ward_id" label="Ward" placeholder="Select ward…">
                     @foreach ($wards as $option)
                         <option value="{{ $option->id }}">{{ $option->name }} — {{ $option->department }}</option>
                     @endforeach
                 </flux:select>
-                <flux:input wire:model="bed_no" label="Bed no." placeholder="e.g. E-01" />
+                <flux:select wire:model="bed_id" label="Bed" placeholder="Select bed…" :disabled="blank($ward_id)">
+                    @foreach ($availableBeds as $bed)
+                        <option value="{{ $bed->id }}">Bed {{ $bed->label() }}</option>
+                    @endforeach
+                </flux:select>
                 <flux:input wire:model="primary_diagnosis" label="Primary diagnosis" />
             </div>
         </flux:fieldset>

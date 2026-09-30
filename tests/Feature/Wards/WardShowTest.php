@@ -52,13 +52,14 @@ test('ward patient list shows bed number and reconciliation status', function ()
     $this->actingAs(User::factory()->create());
 
     $ward = Ward::factory()->create();
-    $withBed = Patient::factory()->create(['ward_id' => $ward->id, 'bed_no' => 'E-01']);
+    $bed = $ward->beds()->first();
+    $withBed = Patient::factory()->create(['ward_id' => $ward->id, 'bed_id' => $bed->id]);
     Reconciliation::factory()->completed()->create(['patient_id' => $withBed->id]);
 
     $noReconciliation = Patient::factory()->create(['ward_id' => $ward->id]);
 
     Livewire::test('pages::wards.show', ['ward' => $ward])
-        ->assertSee('E-01')
+        ->assertSee($bed->label())
         ->assertSee('Done')
         ->assertSee('Not started');
 });
@@ -105,9 +106,70 @@ test('ward patient list can be exported as csv', function () {
     $this->actingAs(User::factory()->create());
 
     $ward = Ward::factory()->create(['name' => 'Ward 1']);
-    Patient::factory()->create(['ward_id' => $ward->id, 'first_name' => 'Ahmad', 'bed_no' => 'E-01']);
+    Patient::factory()->create(['ward_id' => $ward->id, 'first_name' => 'Ahmad', 'bed_id' => $ward->beds()->first()->id]);
 
     Livewire::test('pages::wards.show', ['ward' => $ward])
         ->call('exportList')
         ->assertFileDownloaded('ward-1-patients.csv');
+});
+
+test('ward patient list shows a row for every bed, including empty ones', function () {
+    $this->actingAs(User::factory()->create());
+
+    $ward = Ward::factory()->create(['bed_capacity' => 3]);
+    $bed = $ward->beds()->orderBy('bed_no')->first();
+    $patient = Patient::factory()->create(['ward_id' => $ward->id, 'bed_id' => $bed->id, 'first_name' => 'Ahmad']);
+
+    $response = Livewire::test('pages::wards.show', ['ward' => $ward])
+        ->assertSee('Ahmad')
+        ->assertSee('Occupied')
+        ->assertSee('Empty');
+
+    expect($response->viewData('rows'))->toHaveCount(3);
+});
+
+test('empty bed rows come after occupied ones', function () {
+    $this->actingAs(User::factory()->create());
+
+    $ward = Ward::factory()->create(['bed_capacity' => 3]);
+    $beds = $ward->beds()->orderBy('bed_no')->get();
+    // Occupy the last bed only, leaving beds 1 and 2 empty.
+    Patient::factory()->create(['ward_id' => $ward->id, 'bed_id' => $beds->last()->id]);
+
+    $rows = Livewire::test('pages::wards.show', ['ward' => $ward])->viewData('rows');
+
+    expect($rows->pluck('bed.bed_no')->all())->toBe([3, 1, 2]);
+});
+
+test('empty bed rows are hidden while searching or filtering by risk', function () {
+    $this->actingAs(User::factory()->create());
+
+    $ward = Ward::factory()->create(['bed_capacity' => 3]);
+    $bed = $ward->beds()->first();
+    Patient::factory()->create(['ward_id' => $ward->id, 'bed_id' => $bed->id, 'first_name' => 'Ahmad']);
+
+    Livewire::test('pages::wards.show', ['ward' => $ward])
+        ->set('search', 'Ahmad')
+        ->assertSee('Ahmad')
+        ->assertDontSee('Empty');
+});
+
+test('patients admitted without a bed fill the free beds instead of adding extra rows', function () {
+    $this->actingAs(User::factory()->create());
+
+    $ward = Ward::factory()->create(['bed_capacity' => 12]);
+    Patient::factory()->count(8)->create(['ward_id' => $ward->id]);
+
+    $rows = Livewire::test('pages::wards.show', ['ward' => $ward])->viewData('rows');
+
+    expect($rows)->toHaveCount(12);
+    expect($rows->filter(fn ($row) => $row->patient)->pluck('bed.bed_no')->all())->toBe(range(1, 8));
+    expect($rows->reject(fn ($row) => $row->patient)->pluck('bed.bed_no')->values()->all())->toBe(range(9, 12));
+});
+
+test('creating a ward automatically generates its beds', function () {
+    $ward = Ward::factory()->create(['bed_capacity' => 5]);
+
+    expect($ward->beds()->count())->toBe(5);
+    expect($ward->beds()->pluck('bed_no')->sort()->values()->all())->toBe([1, 2, 3, 4, 5]);
 });

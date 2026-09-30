@@ -4,6 +4,7 @@ use App\Enums\Gender;
 use App\Enums\HepaticFunction;
 use App\Enums\PregnancyStatus;
 use App\Enums\RenalFunction;
+use App\Models\Bed;
 use App\Models\Patient;
 use App\Models\Ward;
 use Illuminate\Validation\Rule;
@@ -37,7 +38,7 @@ new #[Title('New Patient')] class extends Component {
 
     public string $ward_id = '';
 
-    public string $bed_no = '';
+    public string $bed_id = '';
 
     public string $primary_diagnosis = '';
 
@@ -62,6 +63,11 @@ new #[Title('New Patient')] class extends Component {
         $this->admission_date = now()->format('Y-m-d\TH:i');
     }
 
+    public function updatedWardId(): void
+    {
+        $this->bed_id = '';
+    }
+
     public function save(): void
     {
         $validated = $this->validate([
@@ -78,7 +84,7 @@ new #[Title('New Patient')] class extends Component {
             'address_state' => ['nullable', 'string', 'max:50'],
             'admission_date' => ['required', 'date'],
             'ward_id' => ['nullable', 'integer', 'exists:wards,id'],
-            'bed_no' => ['nullable', 'string', 'max:20'],
+            'bed_id' => ['nullable', 'integer', Rule::exists('beds', 'id')->where('ward_id', $this->ward_id)],
             'primary_diagnosis' => ['nullable', 'string', 'max:255'],
             'allergies' => ['nullable', 'string'],
             'known_adrs' => ['nullable', 'string'],
@@ -106,6 +112,10 @@ new #[Title('New Patient')] class extends Component {
     {
         return [
             'wards' => Ward::orderBy('name')->get(),
+            'availableBeds' => Bed::where('ward_id', $this->ward_id)
+                ->whereDoesntHave('patient')
+                ->orderBy('bed_no')
+                ->get(),
         ];
     }
 }; ?>
@@ -151,12 +161,16 @@ new #[Title('New Patient')] class extends Component {
 
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <flux:input wire:model="admission_date" type="datetime-local" label="Admission date & time" required />
-                <flux:select wire:model="ward_id" label="Ward" placeholder="Select ward…">
+                <flux:select wire:model.live="ward_id" label="Ward" placeholder="Select ward…">
                     @foreach ($wards as $option)
                         <option value="{{ $option->id }}">{{ $option->name }} — {{ $option->department }}</option>
                     @endforeach
                 </flux:select>
-                <flux:input wire:model="bed_no" label="Bed no." placeholder="e.g. E-01" />
+                <flux:select wire:model="bed_id" label="Bed" placeholder="Select bed…" :disabled="blank($ward_id)">
+                    @foreach ($availableBeds as $bed)
+                        <option value="{{ $bed->id }}">Bed {{ $bed->label() }}</option>
+                    @endforeach
+                </flux:select>
                 <flux:input wire:model="primary_diagnosis" label="Primary diagnosis" class="sm:col-span-2" />
             </div>
         </flux:fieldset>

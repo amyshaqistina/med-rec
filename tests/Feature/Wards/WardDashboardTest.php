@@ -42,6 +42,14 @@ test('discharged patients no longer count toward ward occupancy', function () {
     expect($response->viewData('availableBeds'))->toBe(8);
 });
 
+test('each ward card shows its total bed count', function () {
+    $this->actingAs(User::factory()->create());
+
+    Ward::factory()->create(['name' => 'Ward 1', 'bed_capacity' => 12]);
+
+    Livewire::test('pages::wards.index')->assertSee('12 beds');
+});
+
 test('clicking a ward navigates to its patient list', function () {
     $this->actingAs(User::factory()->create());
 
