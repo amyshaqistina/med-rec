@@ -19,9 +19,16 @@
         </div>
         <flux:menu.separator />
         <flux:menu.radio.group>
+            @can('register-users')
+                <flux:menu.item :href="route('admin.users.create')" icon="user-plus">
+                    {{ __('Register user') }}
+                </flux:menu.item>
+            @endcan
+
             <flux:menu.item :href="route('profile.edit')" icon="cog" wire:navigate>
                 {{ __('Settings') }}
             </flux:menu.item>
+
             <form method="POST" action="{{ route('logout') }}" class="w-full">
                 @csrf
                 <flux:menu.item
